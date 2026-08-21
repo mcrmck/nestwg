@@ -29,3 +29,5 @@ Versioning once the first version is tagged.
 - Raised the source-build floor to Go 1.27 and refreshed dependencies.
 - Updated the CI supply chain to Ubuntu 26.04, setup-go 7.0.0, CodeQL
   4.37.7, Scorecard 2.4.4, and build-provenance attestation 4.2.2.
+- Switched CodeQL to an explicit Go 1.27 build and removed duplicate
+  govulncheck checkout and cache setup.
