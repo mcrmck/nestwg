@@ -4,11 +4,26 @@ package engine
 
 import (
 	"errors"
+	"net/netip"
 	"strings"
 	"testing"
 
 	"github.com/mcrmck/nestwg/internal/plan"
 )
+
+func TestHandshakeProbeAddressPrefersResolver(t *testing.T) {
+	got := handshakeProbeAddress([]string{"10.0.0.53"}, []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0")})
+	if want := netip.MustParseAddr("10.0.0.53"); got != want {
+		t.Fatalf("probe address = %s, want %s", got, want)
+	}
+}
+
+func TestHandshakeProbeAddressUsesDocumentationAddressForDefaultRoute(t *testing.T) {
+	got := handshakeProbeAddress(nil, []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0")})
+	if want := netip.MustParseAddr("192.0.2.1"); got != want {
+		t.Fatalf("probe address = %s, want %s", got, want)
+	}
+}
 
 func TestNamespacesForPlan(t *testing.T) {
 	chainPlan := &plan.Chain{PayloadNamespace: "nwg-test-app", Hops: []plan.Hop{

@@ -375,7 +375,104 @@ func (m *Manager) WaitReady(ctx context.Context, name string) (*ChainStatus, err
 	}
 }
 
+// TriggerHandshake sends one byte through the innermost configured route. The
+// packet makes WireGuard initiate every nested handshake before an interactive
+// VPN session starts; no response is required.
+func (m *Manager) TriggerHandshake(name string) (resultErr error) {
+	if os.Geteuid() != 0 {
+		return errors.New("handshake trigger requires root privileges (try sudo)")
+	}
+	unlock, err := m.Store.RLock(name)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	chain, err := m.Store.Load(name)
+	if err != nil {
+		return err
+	}
+	document, err := config.Load(chain.ChainFile)
+	if err != nil {
+		return err
+	}
+	if err := document.Validate(); err != nil {
+		return fmt.Errorf("invalid chain: %w", err)
+	}
+	lastHop := document.Spec.Hops[len(document.Spec.Hops)-1]
+	imported, err := wgconfig.Load(lastHop.WireGuardConfigPath)
+	if err != nil {
+		return err
+	}
+	target := handshakeProbeAddress(document.Spec.DNS, imported.Peers[0].AllowedIPs)
+	if !target.IsValid() {
+		return errors.New("exit VPN has no route available for a handshake trigger")
+	}
+
+	original, err := netns.Get()
+	if err != nil {
+		return err
+	}
+	defer original.Close()
+	payload, err := netns.GetFromName(chain.PayloadNamespace)
+	if err != nil {
+		return fmt.Errorf("open VPN network for %q: %w", name, err)
+	}
+	defer payload.Close()
+
+	goruntime.LockOSThread()
+	defer goruntime.UnlockOSThread()
+	defer func() {
+		if err := netns.Set(original); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("restore host network: %w", err))
+		}
+	}()
+	if err := netns.Set(payload); err != nil {
+		return fmt.Errorf("enter VPN network: %w", err)
+	}
+	endpoint := net.UDPAddrFromAddrPort(netip.AddrPortFrom(target, 9))
+	connection, err := net.DialUDP("udp", nil, endpoint)
+	if err != nil {
+		return fmt.Errorf("prepare handshake trigger: %w", err)
+	}
+	_, writeErr := connection.Write([]byte{0})
+	closeErr := connection.Close()
+	return errors.Join(writeErr, closeErr)
+}
+
+func handshakeProbeAddress(resolvers []string, allowed []netip.Prefix) netip.Addr {
+	for _, resolver := range resolvers {
+		address, err := netip.ParseAddr(resolver)
+		if err == nil {
+			return address
+		}
+	}
+	for _, candidate := range []netip.Addr{
+		netip.MustParseAddr("192.0.2.1"),
+		netip.MustParseAddr("2001:db8::1"),
+	} {
+		for _, prefix := range allowed {
+			if prefix.Contains(candidate) {
+				return candidate
+			}
+		}
+	}
+	for _, prefix := range allowed {
+		address := prefix.Masked().Addr()
+		if next := address.Next(); next.IsValid() && prefix.Contains(next) {
+			return next
+		}
+		return address
+	}
+	return netip.Addr{}
+}
+
 func (m *Manager) Exec(name string, argv []string) error {
+	return m.ExecWithEnv(name, argv, nil)
+}
+
+// ExecWithEnv runs argv through a connected chain with the supplied environment
+// values added or replaced for the payload process.
+func (m *Manager) ExecWithEnv(name string, argv []string, values map[string]string) error {
 	if len(argv) == 0 {
 		return errors.New("no command specified")
 	}
@@ -394,7 +491,7 @@ func (m *Manager) Exec(name string, argv []string) error {
 	helperArguments := append([]string{"__exec", name, "--"}, argv...)
 	command := exec.Command(executable, helperArguments...)
 	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
-	command.Env = os.Environ()
+	command.Env = mergedEnvironment(os.Environ(), values)
 	if err := command.Start(); err != nil {
 		return err
 	}
@@ -412,6 +509,29 @@ func (m *Manager) Exec(name string, argv []string) error {
 	close(signals)
 	<-done
 	return waitErr
+}
+
+func mergedEnvironment(environment []string, values map[string]string) []string {
+	if len(values) == 0 {
+		return environment
+	}
+	result := make([]string, 0, len(environment)+len(values))
+	for _, item := range environment {
+		key, _, found := strings.Cut(item, "=")
+		if _, replace := values[key]; found && replace {
+			continue
+		}
+		result = append(result, item)
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		result = append(result, key+"="+values[key])
+	}
+	return result
 }
 
 // EnterAndExec is the internal half of Exec. It enters both the payload

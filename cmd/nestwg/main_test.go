@@ -13,8 +13,19 @@ func TestRunPrintsUsage(t *testing.T) {
 	if err := run(nil, &output, engine.New()); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), "nestwg up") || !strings.Contains(output.String(), "nestwg doctor") {
+	if !strings.Contains(output.String(), "nestwg connect") || !strings.Contains(output.String(), "nestwg doctor") {
 		t.Fatalf("usage = %q", output.String())
+	}
+}
+
+func TestUserShell(t *testing.T) {
+	t.Setenv("SHELL", "/bin/example-shell")
+	if got, want := userShell(), "/bin/example-shell"; got != want {
+		t.Fatalf("userShell() = %q, want %q", got, want)
+	}
+	t.Setenv("SHELL", "")
+	if got, want := userShell(), "/bin/sh"; got != want {
+		t.Fatalf("userShell() = %q, want %q", got, want)
 	}
 }
 

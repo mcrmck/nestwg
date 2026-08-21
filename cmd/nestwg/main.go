@@ -17,6 +17,7 @@ import (
 )
 
 const usage = `Usage:
+  nestwg connect [--wait <duration>] <chain.yaml>
   nestwg validate <chain.yaml>
   nestwg plan <chain.yaml>
   nestwg up [--wait <duration>] <chain.yaml>
@@ -29,15 +30,16 @@ const usage = `Usage:
   nestwg version
 
 Commands:
+  connect   Connect a nested VPN, open a terminal through it, and disconnect on exit
   validate  Parse a chain and check its structure and referenced files
-  plan      Print the namespaces, interfaces, and MTUs without changing the host
+  plan      Preview endpoints, interfaces, routes, and MTUs without changing the host
   up        Create a persistent nested VPN chain
   down      Remove a chain and all resources owned by it
   status    List active chains or show one active chain
-  exec      Run a command through a chain's isolated payload network
-  shell     Open a shell through a chain's isolated payload network
+  exec      Run one command through a connected VPN
+  shell     Open a shell through a connected VPN
   doctor    Check privileges and required Linux networking features
-  recover   Remove orphaned chain namespaces after state loss
+  recover   Remove orphaned VPN resources after state loss
   version   Print the NestWG version
 `
 
@@ -71,8 +73,52 @@ func run(args []string, stdout io.Writer, manager *engine.Manager) error {
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(stdout, "chain %q is valid (%d hops)\n", document.Metadata.Name, len(document.Spec.Hops))
+		fmt.Fprintf(stdout, "VPN configuration %q is valid (%d hops)\n", document.Metadata.Name, len(document.Spec.Hops))
 		return nil
+	case "connect":
+		flags := flag.NewFlagSet("connect", flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		wait := flags.Duration("wait", 10*time.Second, "wait for every VPN hop to handshake (0 disables)")
+		if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 1 || *wait < 0 {
+			return errors.New("connect usage: nestwg connect [--wait <duration>] <chain.yaml>")
+		}
+		chain, err := manager.Up(context.Background(), flags.Arg(0))
+		if err != nil {
+			return err
+		}
+		cleaned := false
+		defer func() {
+			if !cleaned {
+				_ = manager.Down(chain.Name)
+			}
+		}()
+		if *wait > 0 {
+			if err := manager.TriggerHandshake(chain.Name); err != nil {
+				downErr := manager.Down(chain.Name)
+				cleaned = downErr == nil
+				return errors.Join(fmt.Errorf("start VPN handshakes: %w", err), downErr)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), *wait)
+			_, waitErr := manager.WaitReady(ctx, chain.Name)
+			cancel()
+			if waitErr != nil {
+				downErr := manager.Down(chain.Name)
+				cleaned = downErr == nil
+				return errors.Join(fmt.Errorf("connect VPN %q: %w", chain.Name, waitErr), downErr)
+			}
+		}
+		fmt.Fprintf(stdout, "VPN %q ready through %d hops\n", chain.Name, len(chain.Hops))
+		fmt.Fprintln(stdout, "VPN terminal started; type `exit` to disconnect")
+		execErr := manager.ExecWithEnv(chain.Name, []string{userShell()}, map[string]string{
+			"NESTWG_CHAIN": chain.Name,
+			"NESTWG_VPN":   "1",
+		})
+		downErr := manager.Down(chain.Name)
+		if downErr == nil {
+			cleaned = true
+			fmt.Fprintf(stdout, "VPN %q disconnected\n", chain.Name)
+		}
+		return errors.Join(execErr, downErr)
 	case "plan":
 		document, err := loadDocumentArgument(args)
 		if err != nil {
@@ -103,7 +149,7 @@ func run(args []string, stdout io.Writer, manager *engine.Manager) error {
 				return fmt.Errorf("chain %q is up but not ready: %w", chain.Name, err)
 			}
 		}
-		fmt.Fprintf(stdout, "chain %q is up (payload network %s)\n", chain.Name, chain.PayloadNamespace)
+		fmt.Fprintf(stdout, "VPN %q is up\n", chain.Name)
 		return nil
 	case "down":
 		if len(args) != 2 {
@@ -112,7 +158,7 @@ func run(args []string, stdout io.Writer, manager *engine.Manager) error {
 		if err := manager.Down(args[1]); err != nil {
 			return err
 		}
-		fmt.Fprintf(stdout, "chain %q is down\n", args[1])
+		fmt.Fprintf(stdout, "VPN %q is down\n", args[1])
 		return nil
 	case "status":
 		if len(args) > 2 {
@@ -138,7 +184,7 @@ func run(args []string, stdout io.Writer, manager *engine.Manager) error {
 			} else if status.Problem != "" || chain.Phase != "active" {
 				condition = "degraded"
 			}
-			fmt.Fprintf(stdout, "%s\t%s\tsince %s\t%s\n", chain.Name, condition, chain.CreatedAt.Format(time.RFC3339), chain.PayloadNamespace)
+			fmt.Fprintf(stdout, "%s\t%s\tsince %s\n", chain.Name, condition, chain.CreatedAt.Format(time.RFC3339))
 			if len(args) == 2 {
 				if status.Problem != "" {
 					fmt.Fprintf(stdout, "  problem: %s\n", status.Problem)
@@ -156,10 +202,10 @@ func run(args []string, stdout io.Writer, manager *engine.Manager) error {
 			}
 		}
 		if len(args) == 2 && !found {
-			return fmt.Errorf("chain %q is not up", args[1])
+			return fmt.Errorf("VPN %q is not up", args[1])
 		}
 		if len(args) == 1 && !found {
-			fmt.Fprintln(stdout, "no chains are up")
+			fmt.Fprintln(stdout, "no VPNs are up")
 		}
 		return nil
 	case "exec":
@@ -171,11 +217,11 @@ func run(args []string, stdout io.Writer, manager *engine.Manager) error {
 		if len(args) != 2 {
 			return errors.New("shell expects one chain name")
 		}
-		shell := os.Getenv("SHELL")
-		if shell == "" {
-			shell = "/bin/sh"
-		}
-		return manager.Exec(args[1], []string{shell})
+		fmt.Fprintf(stdout, "VPN terminal for %q; type `exit` to leave it\n", args[1])
+		return manager.ExecWithEnv(args[1], []string{userShell()}, map[string]string{
+			"NESTWG_CHAIN": args[1],
+			"NESTWG_VPN":   "1",
+		})
 	case "doctor":
 		if len(args) != 1 {
 			return errors.New("doctor does not accept arguments")
@@ -220,6 +266,14 @@ func run(args []string, stdout io.Writer, manager *engine.Manager) error {
 	default:
 		return fmt.Errorf("unknown command %q\n\n%s", args[0], usage)
 	}
+}
+
+func userShell() string {
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		return "/bin/sh"
+	}
+	return shell
 }
 
 func loadDocumentArgument(args []string) (*config.Document, error) {
