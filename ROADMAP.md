@@ -8,6 +8,9 @@ outcomes rather than promised dates.
 
 - one-command `connect` terminal workflow plus persistent `up`, `down`,
   `status`, `exec`, and `shell` lifecycle;
+- selective host CIDR attachment with explicit detach and fail-closed fallback
+  routes;
+- route- and handshake-aware `diagnose` output;
 - pinned and inspectable endpoints, routes, namespaces, and MTUs;
 - private payload DNS and invoking-user privilege restoration;
 - transactional rollback and crash-recoverable state;
@@ -23,6 +26,8 @@ outcomes rather than promised dates.
 
 - provider-reported compatibility cases and expanded support tiers;
 - additional distribution packages and repository metadata.
+- reboot-persistent attachment policy and service integration;
+- application/cgroup-based routing built on the selective attachment model;
 
 ## v1.0 — stable operational contract
 
@@ -32,6 +37,6 @@ outcomes rather than promised dates.
 - external security review and resolved findings;
 - reproducible, signed packages and a maintained vulnerability policy.
 
-Host-wide routing, provider account APIs, graphical interfaces, and non-Linux
-clients remain later possibilities. They must not weaken the isolated mode or
-expand the privileged core without a clear security argument.
+Provider account APIs, graphical interfaces, domain-based routing, and
+non-Linux clients remain later possibilities. They must not weaken the
+isolated mode or expand the privileged core without a clear security argument.

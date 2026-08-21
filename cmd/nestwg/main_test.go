@@ -45,3 +45,21 @@ func TestRunRejectsUnknownCommandBeforeOpeningFiles(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestParseAttachArgumentsAcceptsRoutesBeforeAndAfterName(t *testing.T) {
+	name, routes, err := parseAttachArguments([]string{"--route", "10.0.0.0/8", "example", "--route=2001:db8::/32"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "example" || strings.Join(routes, ",") != "10.0.0.0/8,2001:db8::/32" {
+		t.Fatalf("parseAttachArguments() = %q, %#v", name, routes)
+	}
+}
+
+func TestParseAttachArgumentsRejectsIncompleteInput(t *testing.T) {
+	for _, arguments := range [][]string{{"example"}, {"--route"}, {"one", "two", "--route", "10.0.0.0/8"}} {
+		if _, _, err := parseAttachArguments(arguments); err == nil {
+			t.Errorf("parseAttachArguments(%q) unexpectedly succeeded", arguments)
+		}
+	}
+}

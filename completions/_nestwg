@@ -6,8 +6,11 @@ commands=(
   'validate:validate a chain and its WireGuard files'
   'plan:print the pinned executable plan'
   'up:create a persistent nested VPN chain'
+  'attach:route selected host CIDRs through a VPN'
+  'detach:remove protected host routes and device'
   'down:remove a chain'
   'status:show live chain status'
+  'diagnose:check VPN and protected-route health'
   'exec:run a command through a connected VPN'
   'shell:open a shell through a connected VPN'
   'doctor:check Linux networking prerequisites'
@@ -33,6 +36,9 @@ case "$state" in
         ;;
       up)
         _arguments '--wait[wait for handshakes]:duration:' '*:chain file:_files -g "*.yaml"'
+        ;;
+      attach)
+        _arguments '*--route[protect a destination through the VPN]:CIDR:' '1:chain name:'
         ;;
     esac
     ;;

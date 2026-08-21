@@ -5,6 +5,7 @@ package engine
 import (
 	"errors"
 	"net/netip"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -15,6 +16,33 @@ func TestHandshakeProbeAddressPrefersResolver(t *testing.T) {
 	got := handshakeProbeAddress([]string{"10.0.0.53"}, []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0")})
 	if want := netip.MustParseAddr("10.0.0.53"); got != want {
 		t.Fatalf("probe address = %s, want %s", got, want)
+	}
+}
+
+func TestParseRoutesCanonicalizesAndSorts(t *testing.T) {
+	got, err := ParseRoutes([]string{"2001:db8::1/64", "203.0.113.7/24"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []netip.Prefix{netip.MustParsePrefix("203.0.113.0/24"), netip.MustParsePrefix("2001:db8::/64")}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ParseRoutes() = %#v, want %#v", got, want)
+	}
+}
+
+func TestParseRoutesRejectsMissingInvalidAndDuplicateRoutes(t *testing.T) {
+	for _, routes := range [][]string{nil, {"not-a-cidr"}, {"0.0.0.0/0"}, {"10.0.0.0/8", "10.0.0.1/8"}} {
+		if _, err := ParseRoutes(routes); err == nil {
+			t.Errorf("ParseRoutes(%q) unexpectedly succeeded", routes)
+		}
+	}
+}
+
+func TestAttachmentInterfaceNameIsStableAndFitsLinuxLimit(t *testing.T) {
+	first := attachmentInterfaceName("example-with-a-long-name")
+	second := attachmentInterfaceName("example-with-a-long-name")
+	if first != second || len(first) > 15 {
+		t.Fatalf("attachmentInterfaceName() = %q, %q", first, second)
 	}
 }
 

@@ -58,10 +58,11 @@ type HopStatus struct {
 }
 
 type ChainStatus struct {
-	Chain   state.Chain
-	Ready   bool
-	Hops    []HopStatus
-	Problem string
+	Chain      state.Chain
+	Ready      bool
+	Hops       []HopStatus
+	Attachment AttachmentStatus
+	Problem    string
 }
 
 type DoctorCheck struct {
@@ -182,6 +183,9 @@ func (m *Manager) Down(name string) error {
 	}
 	if err != nil {
 		return err
+	}
+	if chain.Attachment != nil {
+		return fmt.Errorf("VPN %q has protected host routes; run `nestwg detach %s` before taking it down", name, name)
 	}
 	for _, namespace := range chain.Namespaces {
 		pids, err := namespacePIDs(namespace)
@@ -315,6 +319,11 @@ func (m *Manager) Inspect(name string) (*ChainStatus, error) {
 		return nil, err
 	}
 	result := &ChainStatus{Chain: *chain, Ready: chain.Phase == state.PhaseActive}
+	result.Attachment = m.InspectAttachment(chain)
+	if result.Attachment.Problem != "" {
+		result.Ready = false
+		result.Problem = result.Attachment.Problem
+	}
 	for _, namespace := range chain.Namespaces {
 		handle, err := netns.GetFromName(namespace)
 		if err != nil {
@@ -324,9 +333,18 @@ func (m *Manager) Inspect(name string) (*ChainStatus, error) {
 		}
 		handle.Close()
 	}
-	for _, hop := range chain.Hops {
+	for index, hop := range chain.Hops {
 		hopStatus := HopStatus{Name: hop.Name, InterfaceName: hop.InterfaceName}
-		device, err := wireGuardDevice(hop.InterfaceNamespace, hop.InterfaceName)
+		interfaceName := hop.InterfaceName
+		var device *wgtypes.Device
+		var err error
+		if chain.Attachment != nil && index == len(chain.Hops)-1 {
+			interfaceName = chain.Attachment.HostInterface
+			hopStatus.InterfaceName = interfaceName
+			device, err = currentWireGuardDevice(interfaceName)
+		} else {
+			device, err = wireGuardDevice(hop.InterfaceNamespace, interfaceName)
+		}
 		if err != nil {
 			hopStatus.Error = err.Error()
 			result.Ready = false
@@ -550,6 +568,9 @@ func (m *Manager) EnterAndExec(name string, argv []string) error {
 	}
 	if chain.Phase != state.PhaseActive {
 		return fmt.Errorf("chain %q is not ready (phase %s)", name, chain.Phase)
+	}
+	if chain.Attachment != nil {
+		return fmt.Errorf("VPN %q is attached to the host; run commands normally or detach it before using exec/shell", name)
 	}
 	commandPath, err := exec.LookPath(argv[0])
 	if err != nil {
@@ -873,6 +894,15 @@ func wireGuardDevice(namespaceName, interfaceName string) (device *wgtypes.Devic
 			resultErr = errors.Join(resultErr, err)
 		}
 	}()
+	client, err := wgctrl.New()
+	if err != nil {
+		return nil, err
+	}
+	defer client.Close()
+	return client.Device(interfaceName)
+}
+
+func currentWireGuardDevice(interfaceName string) (*wgtypes.Device, error) {
 	client, err := wgctrl.New()
 	if err != nil {
 		return nil, err

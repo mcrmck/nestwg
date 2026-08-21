@@ -26,6 +26,13 @@ prove `down` is safely retryable. Release binaries omit the failpoint code.
 The first two public endpoints use IPv4 and the innermost endpoint uses IPv6,
 exercising mixed-family route and MTU planning.
 
+It additionally attaches IPv4 and IPv6 host CIDRs, verifies ordinary host
+traffic remains unchanged, exercises both routes through all three tunnels,
+and then moves the
+exposed WireGuard device away from the host to prove the unreachable backup
+prevents default-route fallback. It verifies that `down` refuses protected
+routes and that explicit `detach` restores the device and ordinary routing.
+
 Run it on a Linux Docker host:
 
 ```sh

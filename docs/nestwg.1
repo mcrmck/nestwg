@@ -16,11 +16,23 @@ nestwg \- create and manage nested WireGuard VPN chains
 .RB [ --wait " duration]
 .IR chain.yaml
 .br
+.B nestwg attach
+.I chain-name
+.B --route
+.I CIDR
+.RB [ --route " CIDR...]
+.br
+.B nestwg detach
+.IR chain-name
+.br
 .B nestwg down
 .IR chain-name
 .br
 .B nestwg status
 .RI [ chain-name ]
+.br
+.B nestwg diagnose
+.IR chain-name
 .br
 .B nestwg exec
 .I chain-name
@@ -72,10 +84,29 @@ expires. A readiness timeout leaves the configured chain up for inspection.
 .TP
 .B down
 Remove a chain in reverse order. Teardown refuses to proceed while a
-NestWG-managed payload command holds a shared lifecycle lock.
+NestWG-managed payload command holds a shared lifecycle lock or while protected
+host routes are attached.
+.TP
+.B attach
+Expose the innermost WireGuard device to the host and route each supplied
+destination CIDR through it. The device socket remains inside the preceding
+VPN layer, preserving nesting without forwarding or NAT. Requested CIDRs must
+be covered by the exit peer AllowedIPs and must not replace existing exact
+routes. Every live route receives an unreachable backup so loss of the device
+cannot fall back to the normal default route.
+.TP
+.B detach
+Return the exit WireGuard device to the isolated payload network and remove
+active VPN routes and fail-closed unreachable routes. Ordinary host routing
+resumes for those destinations.
 .TP
 .B status
-Show active chains and live handshake and transfer information.
+Show active chains, live handshake and transfer information, host attachment
+state, and protected routes.
+.TP
+.B diagnose
+Check runtime construction, every hop handshake, host device state, active
+CIDR routes, and their fail-closed unreachable alternatives.
 .TP
 .B exec
 Run one command through the fail-closed VPN connection with private DNS.
