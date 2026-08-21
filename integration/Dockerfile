@@ -9,7 +9,7 @@ RUN go mod download || GODEBUG=tlsmlkem=0 go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -tags nestwg_integration -trimpath -o /out/nestwg ./cmd/nestwg
 
-FROM ubuntu:24.04
+FROM ubuntu:26.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 

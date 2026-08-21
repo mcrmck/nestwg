@@ -24,3 +24,5 @@ Versioning once the first version is tagged.
 - Added a sanitized compatibility corpus covering common minimal, split-route,
   dual-stack, preshared-key, keepalive, and `wg-quick` metadata shapes.
 - Raised the source-build floor to Go 1.27 and refreshed dependencies.
+- Updated the CI supply chain to Ubuntu 26.04, setup-go 7.0.0, CodeQL
+  4.37.7, Scorecard 2.4.4, and build-provenance attestation 4.2.2.
