@@ -2,6 +2,10 @@
 .SH NAME
 nestwg \- create and manage nested WireGuard VPN chains
 .SH SYNOPSIS
+.B nestwg connect
+.RB [ --wait " duration]
+.IR chain.yaml
+.br
 .B nestwg validate
 .IR chain.yaml
 .br
@@ -35,23 +39,30 @@ nestwg \- create and manage nested WireGuard VPN chains
 .B nestwg version
 .SH DESCRIPTION
 .B nestwg
-constructs ordered WireGuard tunnels inside Linux network namespaces. Each
-inner WireGuard socket is born in the plaintext network exposed by the
-previous hop, forcing its encrypted transport through that hop. The payload
-network contains only loopback and the innermost WireGuard interface.
+connects a Linux terminal or selected commands through ordered WireGuard VPN
+hops. Each inner VPN connection is forced through the previous hop. The normal
+host network is not changed, and selected VPN traffic cannot fall back to it if
+a hop fails.
 .PP
 The chain document orders hops from the outermost entry to the innermost exit.
 Endpoint hostnames are resolved and pinned before privileged network changes.
 Plans and runtime state do not contain private or preshared keys.
 .SH COMMANDS
 .TP
+.B connect
+Configure every VPN hop, initiate the nested handshakes, wait up to ten seconds
+by default, and open the invoking user's shell through the VPN. Set
+.B --wait 0
+to open the shell immediately. Exiting the shell disconnects and removes the
+VPN automatically. The shell receives NESTWG_VPN=1 and NESTWG_CHAIN=<name>.
+.TP
 .B validate
 Strictly parse the chain and referenced WireGuard files without changing the
 host.
 .TP
 .B plan
-Print the executable JSON plan, including pinned endpoints, namespace names,
-interface addresses, allowed routes, and calculated MTUs.
+Print the executable JSON plan, including pinned endpoints, interface
+addresses, allowed routes, implementation resources, and calculated MTUs.
 .TP
 .B up
 Create a persistent chain. With
@@ -67,11 +78,11 @@ NestWG-managed payload command holds a shared lifecycle lock.
 Show active chains and live handshake and transfer information.
 .TP
 .B exec
-Run one command in the fail-closed payload network with private DNS mounts.
+Run one command through the fail-closed VPN connection with private DNS.
 When invoked via sudo, the command runs as the invoking user.
 .TP
 .B shell
-Open the invoking user's shell in the payload network.
+Open the invoking user's shell through an already connected persistent VPN.
 .TP
 .B doctor
 Check privileges, netlink access, kernel WireGuard support, resolver mounting,
@@ -101,7 +112,9 @@ Lifecycle and inspection commands return zero on success and nonzero on
 validation, readiness, privilege, or kernel-operation failure. The
 .B exec
 and
-.B shell
+.BR shell ,
+and
+.B connect
 commands preserve the payload process exit status.
 .SH SEE ALSO
 .BR wg (8),

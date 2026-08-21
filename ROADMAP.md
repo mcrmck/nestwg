@@ -1,12 +1,13 @@
 # Roadmap
 
-NestWG aims to be a provider-neutral, fail-closed Linux tool for persistent
-nested WireGuard chains. Milestones describe required outcomes rather than
-promised dates.
+NestWG aims to be a provider-neutral, fail-closed Linux VPN client for routing
+a terminal through nested WireGuard hops. Milestones describe required
+outcomes rather than promised dates.
 
 ## v0.1 — trustworthy preview
 
-- persistent `up`, `down`, `status`, `exec`, and `shell` lifecycle;
+- one-command `connect` terminal workflow plus persistent `up`, `down`,
+  `status`, `exec`, and `shell` lifecycle;
 - pinned and inspectable endpoints, routes, namespaces, and MTUs;
 - private payload DNS and invoking-user privilege restoration;
 - transactional rollback and crash-recoverable state;

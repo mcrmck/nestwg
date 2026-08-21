@@ -2,15 +2,16 @@
 
 local -a commands
 commands=(
+  'connect:connect a nested VPN and open a terminal'
   'validate:validate a chain and its WireGuard files'
   'plan:print the pinned executable plan'
   'up:create a persistent nested VPN chain'
   'down:remove a chain'
   'status:show live chain status'
-  'exec:run a command in a payload network'
-  'shell:open a shell in a payload network'
+  'exec:run a command through a connected VPN'
+  'shell:open a shell through a connected VPN'
   'doctor:check Linux networking prerequisites'
-  'recover:remove process-free orphan namespaces'
+  'recover:remove process-free orphan VPN resources'
   'version:print the version'
 )
 
@@ -24,6 +25,9 @@ case "$state" in
     ;;
   args)
     case "$words[2]" in
+      connect)
+        _arguments '--wait[wait for every VPN hop]:duration:' '*:chain file:_files -g "*.yaml"'
+        ;;
       validate|plan)
         _files -g '*.yaml'
         ;;
