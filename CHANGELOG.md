@@ -5,6 +5,12 @@ Versioning once the first version is tagged.
 
 ## Unreleased
 
+- Added direct WireGuard-device selective CIDR routing with explicit
+  attach/detach,
+  per-route unreachable fallbacks, and teardown protection against route
+  leaks.
+- Added `diagnose` checks for runtime construction, handshakes, attachment
+  devices, live routes, and fail-closed backups.
 - Added a VPN-first `connect` command that initiates and verifies every nested
   handshake, opens the user's terminal with VPN identity variables, and
   disconnects on exit.

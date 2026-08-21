@@ -190,8 +190,9 @@ ip netns exec "$DEST" wg set wg-final-s \
     private-key "$KEY_DIR/final-server.key" \
     listen-port 51820 \
     peer "$(<"$KEY_DIR/final-client.pub")" \
-    allowed-ips 10.10.3.2/32
+    allowed-ips 10.10.3.2/32,fd00:3::2/128
 ip -n "$DEST" address add 10.10.3.1/24 dev wg-final-s
+ip -n "$DEST" -6 address add fd00:3::1/64 dev wg-final-s
 ip -n "$DEST" link set wg-final-s up
 ip netns exec "$DEST" iptables -A FORWARD -i wg-final-s -o dest-final -j ACCEPT
 ip netns exec "$DEST" iptables -A FORWARD -i dest-final -o wg-final-s -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
@@ -224,12 +225,12 @@ EOF
 cat >"$KEY_DIR/final.conf" <<EOF
 [Interface]
 PrivateKey = $(<"$KEY_DIR/final-client.key")
-Address = 10.10.3.2/24
+Address = 10.10.3.2/24, fd00:3::2/64
 
 [Peer]
 PublicKey = $(<"$KEY_DIR/final-server.pub")
 Endpoint = [2001:db8:2::2]:51820
-AllowedIPs = 0.0.0.0/0
+AllowedIPs = 0.0.0.0/0, ::/0
 PersistentKeepalive = 5
 EOF
 
@@ -398,6 +399,65 @@ echo "three-hop mixed-family WireGuard nesting lab passed"
 echo "entry saw only the opaque inner tunnel endpoint: 198.51.100.2"
 echo "middle saw only the opaque IPv6 innermost endpoint: 2001:db8:2::2"
 echo "exit saw the final destination but not the client underlay: 203.0.114.2"
+
+# A persistent chain can expose selected CIDRs to ordinary host processes.
+# NestWG installs an unreachable alternative for every live route, so loss of
+# the attachment cannot make protected traffic fall back to the host default.
+nsenter --net="/run/netns/$C0" nestwg attach lab \
+    --route 203.0.114.2/32 --route fd00:3::1/128
+attachment_device="$(nsenter --net="/run/netns/$C0" nestwg status lab | awk '/host device/{sub(":", "", $3); print $3}')"
+if [[ -z "$attachment_device" ]]; then
+    fail "status did not report the host attachment device"
+fi
+if ! ip -n "$C0" -details link show "$attachment_device" | grep -q 'wireguard'; then
+    fail "host attachment is not the innermost WireGuard device"
+fi
+nsenter --net="/run/netns/$C0" nestwg diagnose lab
+if [[ "$(ip -n "$C0" route show exact 203.0.114.2/32 | wc -l)" -ne 2 ]]; then
+    fail "protected CIDR does not have both active and fail-closed routes"
+fi
+if [[ "$(ip -n "$C0" -6 route show exact fd00:3::1/128 | wc -l)" -ne 2 ]]; then
+    fail "protected IPv6 CIDR does not have both active and fail-closed routes"
+fi
+if ! ip netns exec "$C0" ping -c 1 -W 2 203.0.114.2; then
+    ip -n "$C0" address show dev "$attachment_device" >&2
+    ip -n "$C0" route show >&2
+    fail "host traffic did not cross the attached WireGuard device"
+fi
+ip netns exec "$C0" ping -6 -c 1 -W 2 fd00:3::1 >/dev/null
+ip netns exec "$C0" ping -c 1 -W 2 192.0.2.1 >/dev/null
+if nestwg down lab 2>/dev/null; then
+    fail "down unexpectedly removed a VPN with protected host routes"
+fi
+if nsenter --net="/run/netns/$C0" nestwg exec lab -- true 2>/dev/null; then
+    fail "exec unexpectedly entered an attached VPN without its exit device"
+fi
+
+# Simulate sudden attachment loss by moving the WireGuard device away from the
+# host. Its active route disappears, but the unreachable alternative must
+# remain and win over the normal default. Detach then restores its original
+# payload location and name.
+ip -n "$C0" link set "$attachment_device" netns "$PAYLOAD"
+if ip netns exec "$C0" ip route get 203.0.114.2 >/dev/null 2>&1; then
+    fail "protected traffic fell back after attachment device loss"
+fi
+if ip netns exec "$C0" ip -6 route get fd00:3::1 >/dev/null 2>&1; then
+    fail "protected IPv6 traffic fell back after attachment device loss"
+fi
+if ! ip -n "$C0" route show exact 203.0.114.2/32 type unreachable | grep -q '^unreachable'; then
+    fail "fail-closed route disappeared with the attachment device"
+fi
+if ! ip -n "$C0" -6 route show exact fd00:3::1/128 type unreachable | grep -q '^unreachable'; then
+    fail "IPv6 fail-closed route disappeared with the attachment device"
+fi
+nsenter --net="/run/netns/$C0" nestwg detach lab
+if ip -n "$C0" route show exact 203.0.114.2/32 | grep -q .; then
+    fail "detach left host routes behind"
+fi
+if ip -n "$C0" -6 route show exact fd00:3::1/128 | grep -q .; then
+    fail "detach left IPv6 host routes behind"
+fi
+ip -n "$PAYLOAD" link show nwg2 >/dev/null
 
 # Teardown failures must retain enough state for a safe retry. Exercise a
 # failure before namespace deletion, after namespace deletion, and after the

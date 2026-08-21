@@ -89,3 +89,25 @@ export shapes: minimal hostname endpoints, IPv4 split routes, dual-stack
 addresses and routes, preshared keys, disabled keepalives, and `wg-quick`
 metadata and hooks. Fixtures use synthetic keys and do not imply endorsement
 or certification by any provider.
+
+## Selective host routes
+
+Host attachment is configured at runtime, independently of the chain file:
+
+```sh
+sudo nestwg up --wait 10s mixed-example.yaml
+sudo nestwg attach mixed-example --route 10.0.0.0/8 --route 203.0.113.7/32
+```
+
+Every requested CIDR must be wholly contained by an `AllowedIPs` prefix on the
+final WireGuard peer. NestWG canonicalizes CIDRs, rejects duplicates, and
+refuses to replace an existing exact host route. Less-specific routes,
+including the ordinary default route, are left intact.
+
+The attachment applies to destination routing for all host applications. It
+does not select traffic by process, user, domain name, or port. An explicit
+`nestwg detach mixed-example` removes both the active VPN routes and their
+fail-closed unreachable alternatives. The preview rejects IPv4 and IPv6
+default routes in attachment mode; use `connect` for a fail-closed full-tunnel
+session. While attached, run applications normally on the host; `exec` and
+`shell` resume after `detach` returns the exit device to the payload network.

@@ -79,8 +79,8 @@ partial chain as active.
 
 ## Routing invariants
 
-- The payload namespace contains only loopback and the innermost WireGuard
-  interface.
+- Without host attachment, the payload namespace contains only loopback and
+  the innermost WireGuard interface.
 - Every transit namespace routes the next hop's WireGuard socket through the
   immediately preceding WireGuard interface.
 - Public endpoints are resolved and pinned before setup. Transit namespaces do
@@ -88,9 +88,18 @@ partial chain as active.
 - DNS for applications is configured only in the payload process's private
   mount namespace. An empty resolver list produces a fail-closed resolver file
   rather than inheriting host DNS.
-- Failure of a hop leaves no alternate interface in the payload namespace.
-- The initial implementation launches selected processes inside the chain; it
-  does not replace the host's default route.
+- Failure of a hop leaves no route around the nested chain.
+- Host attachment moves the innermost WireGuard interface into the host
+  namespace. Its UDP socket remains in its original transit namespace, so
+  encryption still exits through every preceding VPN layer.
+- Every selected host CIDR has a live route through that WireGuard device and
+  a lower-priority unreachable route. Loss of the device removes the live
+  route but leaves the unreachable route to prevent default-route fallback.
+- Existing exact host routes are never replaced. `down` refuses attached
+  chains; only explicit `detach` removes the unreachable routes.
+- Host attachment changes selected destination routes, not the default route.
+  The preview rejects `/0` attachments; `connect` remains the full-tunnel
+  workflow.
 
 ## MTU calculation
 
@@ -112,6 +121,7 @@ safety margin for cellular and other constrained networks.
 Creating network namespaces and configuring WireGuard requires root or
 equivalent capabilities. The CLI is short-lived and has no privileged daemon.
 It validates names, paths, addresses, routes, and endpoints before mutation and
-uses netlink APIs rather than constructing shell commands. Payload commands
+uses netlink APIs for devices, addresses, and routes. No forwarding, NAT, or
+firewall rules are needed for host attachment. Payload commands
 drop back to the invoking sudo user's identity after entering their isolated
 network and mount namespaces.

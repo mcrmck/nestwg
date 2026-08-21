@@ -21,8 +21,11 @@ const usage = `Usage:
   nestwg validate <chain.yaml>
   nestwg plan <chain.yaml>
   nestwg up [--wait <duration>] <chain.yaml>
+  nestwg attach <chain-name> --route <CIDR> [--route <CIDR>...]
+  nestwg detach <chain-name>
   nestwg down <chain-name>
   nestwg status [chain-name]
+  nestwg diagnose <chain-name>
   nestwg exec <chain-name> -- <command> [arguments...]
   nestwg shell <chain-name>
   nestwg doctor
@@ -34,8 +37,11 @@ Commands:
   validate  Parse a chain and check its structure and referenced files
   plan      Preview endpoints, interfaces, routes, and MTUs without changing the host
   up        Create a persistent nested VPN chain
+  attach    Route selected host CIDRs through a persistent VPN
+  detach    Return the exit device to isolation and remove host routes
   down      Remove a chain and all resources owned by it
   status    List active chains or show one active chain
+  diagnose  Explain VPN, handshake, attachment, and fail-closed route health
   exec      Run one command through a connected VPN
   shell     Open a shell through a connected VPN
   doctor    Check privileges and required Linux networking features
@@ -160,6 +166,33 @@ func run(args []string, stdout io.Writer, manager *engine.Manager) error {
 		}
 		fmt.Fprintf(stdout, "VPN %q is down\n", args[1])
 		return nil
+	case "attach":
+		name, routeValues, err := parseAttachArguments(args[1:])
+		if err != nil {
+			return err
+		}
+		routes, err := engine.ParseRoutes(routeValues)
+		if err != nil {
+			return err
+		}
+		attachment, err := manager.Attach(name, routes)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "VPN %q attached as %s\n", name, attachment.HostInterface)
+		for _, route := range attachment.Routes {
+			fmt.Fprintf(stdout, "  %s through VPN (fail-closed)\n", route)
+		}
+		return nil
+	case "detach":
+		if len(args) != 2 {
+			return errors.New("detach expects one chain name")
+		}
+		if err := manager.Detach(args[1]); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "VPN %q detached; protected host routes removed\n", args[1])
+		return nil
 	case "status":
 		if len(args) > 2 {
 			return errors.New("status accepts at most one chain name")
@@ -199,6 +232,22 @@ func run(args []string, stdout io.Writer, manager *engine.Manager) error {
 					}
 					fmt.Fprintf(stdout, "  %s (%s): handshake %s, rx %d, tx %d\n", hop.Name, hop.InterfaceName, handshake, hop.ReceiveBytes, hop.TransmitBytes)
 				}
+				if status.Attachment.Attached {
+					deviceState := "down"
+					if status.Attachment.InterfaceUp {
+						deviceState = "up"
+					}
+					fmt.Fprintf(stdout, "  host device %s: %s\n", status.Attachment.InterfaceName, deviceState)
+					for _, route := range status.Attachment.Routes {
+						condition := "blocked"
+						if route.Active && route.FailClosed {
+							condition = "VPN, fail-closed"
+						} else if !route.FailClosed {
+							condition = "unsafe"
+						}
+						fmt.Fprintf(stdout, "  route %s: %s\n", route.Prefix, condition)
+					}
+				}
 			}
 		}
 		if len(args) == 2 && !found {
@@ -206,6 +255,19 @@ func run(args []string, stdout io.Writer, manager *engine.Manager) error {
 		}
 		if len(args) == 1 && !found {
 			fmt.Fprintln(stdout, "no VPNs are up")
+		}
+		return nil
+	case "diagnose":
+		if len(args) != 2 {
+			return errors.New("diagnose expects one chain name")
+		}
+		status, err := manager.Inspect(args[1])
+		if err != nil {
+			return err
+		}
+		failed := printDiagnostics(stdout, status)
+		if failed {
+			return fmt.Errorf("VPN %q has one or more failed checks", args[1])
 		}
 		return nil
 	case "exec":
@@ -266,6 +328,76 @@ func run(args []string, stdout io.Writer, manager *engine.Manager) error {
 	default:
 		return fmt.Errorf("unknown command %q\n\n%s", args[0], usage)
 	}
+}
+
+func parseAttachArguments(args []string) (string, []string, error) {
+	var name string
+	var routes []string
+	for index := 0; index < len(args); index++ {
+		switch {
+		case args[index] == "--route":
+			index++
+			if index == len(args) {
+				return "", nil, errors.New("attach --route requires a CIDR")
+			}
+			routes = append(routes, args[index])
+		case strings.HasPrefix(args[index], "--route="):
+			routes = append(routes, strings.TrimPrefix(args[index], "--route="))
+		case strings.HasPrefix(args[index], "-"):
+			return "", nil, fmt.Errorf("unknown attach option %q", args[index])
+		case name == "":
+			name = args[index]
+		default:
+			return "", nil, errors.New("attach accepts one chain name")
+		}
+	}
+	if name == "" || len(routes) == 0 {
+		return "", nil, errors.New("attach usage: nestwg attach <chain-name> --route <CIDR> [--route <CIDR>...]")
+	}
+	return name, routes, nil
+}
+
+func printDiagnostics(stdout io.Writer, status *engine.ChainStatus) bool {
+	failed := false
+	printCheck := func(name string, ok bool, message string) {
+		result := "ok"
+		if !ok {
+			result = "failed"
+			failed = true
+		}
+		fmt.Fprintf(stdout, "%-28s %s", name, result)
+		if message != "" {
+			fmt.Fprintf(stdout, ": %s", message)
+		}
+		fmt.Fprintln(stdout)
+	}
+	printCheck("runtime state", status.Chain.Phase == "active", "phase "+status.Chain.Phase)
+	constructionOK := len(status.Hops) == len(status.Chain.Hops)
+	constructionMessage := ""
+	if !constructionOK {
+		constructionMessage = status.Problem
+	}
+	printCheck("network construction", constructionOK, constructionMessage)
+	for _, hop := range status.Hops {
+		message := "no handshake yet"
+		ok := hop.Error == "" && !hop.Handshake.IsZero()
+		if hop.Error != "" {
+			message = hop.Error
+		} else if ok {
+			message = fmt.Sprintf("last handshake %s; rx %d, tx %d", hop.Handshake.Format(time.RFC3339), hop.ReceiveBytes, hop.TransmitBytes)
+		}
+		printCheck("hop "+hop.Name, ok, message)
+	}
+	if !status.Attachment.Attached {
+		printCheck("host attachment", true, "not requested")
+		return failed
+	}
+	printCheck("host device", status.Attachment.InterfaceUp, status.Attachment.InterfaceName)
+	for _, route := range status.Attachment.Routes {
+		printCheck("route "+route.Prefix, route.Active, "selected through "+status.Attachment.InterfaceName)
+		printCheck("fail-closed "+route.Prefix, route.FailClosed, "unreachable backup installed")
+	}
+	return failed
 }
 
 func userShell() string {

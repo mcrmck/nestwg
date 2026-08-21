@@ -6,7 +6,10 @@ _nestwg() {
     command="${COMP_WORDS[1]}"
 
     if (( COMP_CWORD == 1 )); then
-        COMPREPLY=( $(compgen -W 'connect validate plan up down status exec shell doctor recover version' -- "$current") )
+        COMPREPLY=( $(compgen -W 'connect validate plan up attach detach down status diagnose exec shell doctor recover version' -- "$current") )
+        return
+    fi
+    if [[ "$command" == attach && "$previous" == --route ]]; then
         return
     fi
     if [[ ( "$command" == connect || "$command" == up ) && "$previous" == --wait ]]; then
@@ -17,6 +20,9 @@ _nestwg() {
         connect|validate|plan|up)
             COMPREPLY=( $(compgen -f -- "$current") )
             ;;
+		attach)
+			COMPREPLY=( $(compgen -W '--route' -- "$current") )
+			;;
     esac
 }
 complete -F _nestwg nestwg

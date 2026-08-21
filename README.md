@@ -23,8 +23,8 @@ WireGuard client configuration and permits traffic to the next hop.
 
 This repository is a pre-release technical preview. The primary workflow is a
 VPN terminal that connects every configured WireGuard hop and disconnects
-automatically when the terminal exits. Persistent connections and one-command
-execution are also available.
+automatically when the terminal exits. Persistent connections, one-command
+execution, and selective host CIDR routing are also available.
 
 ## Design goals
 
@@ -73,6 +73,42 @@ sudo nestwg shell example
 sudo nestwg exec example -- curl https://example.com
 sudo nestwg down example
 ```
+
+To send selected destinations from ordinary host applications through the
+nested VPN while leaving all other host traffic unchanged:
+
+```sh
+sudo nestwg up --wait 10s chain.yaml
+sudo nestwg attach example \
+  --route 203.0.113.0/24 \
+  --route 2001:db8:1234::/48
+sudo nestwg status example
+sudo nestwg diagnose example
+```
+
+`attach` exposes the innermost WireGuard device to the host and installs only
+the requested routes. The device's encrypted UDP socket remains inside the
+previous VPN layer, preserving the nested path without NAT or packet
+forwarding.
+
+Each live VPN route has a lower-priority unreachable alternative. If the
+device or VPN path disappears, the protected CIDR remains blocked instead of
+falling back to the host's normal default route. `down` therefore refuses an
+attached VPN. Restoring ordinary routing is explicit:
+
+```sh
+sudo nestwg detach example
+sudo nestwg down example
+```
+
+Every attached CIDR must be covered by the final peer's `AllowedIPs`. CIDRs
+are destination based: all host processes using the normal routing table are
+affected. Existing exact routes are never replaced. The preview rejects `/0`
+attachments; use `connect` for an isolated full-tunnel session.
+
+While attached, use applications normally on the host. `nestwg exec` and
+`nestwg shell` are disabled because the exit device is host-visible rather
+than inside the isolated VPN terminal; `detach` restores those workflows.
 
 Use `nestwg plan chain.yaml` to preview resolved endpoints, interfaces, routes,
 and MTUs without changing the host. `sudo nestwg recover example` is available

@@ -35,6 +35,14 @@ WireGuard does not make plaintext HTTP confidential from the exit.
 - Opportunistic observers with visibility of only part of the path.
 - Configuration mistakes that could otherwise leak DNS or payload traffic.
 
+For host attachments, the fail-closed guarantee applies to explicitly attached
+destination CIDRs while NestWG's runtime state and unreachable routes remain
+installed. `down` cannot remove an attachment implicitly. An operator must use
+`detach` to deliberately restore normal routing. Root can still alter or delete
+routes, firewall rules, state, and namespaces; protection against a malicious
+or mistaken root operator is outside the model. Runtime state under `/run` does
+not survive reboot, so reboot-persistent routing policy is not yet claimed.
+
 Authenticated inner WireGuard packets prevent an entry from reading or
 silently modifying application packets. An entry can still delay, replay, or
 drop opaque packets; WireGuard rejects invalid modifications and replays, but
