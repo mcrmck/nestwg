@@ -1,0 +1,8 @@
+services:
+  lab:
+    build:
+      context: ..
+      dockerfile: integration/Dockerfile
+    privileged: true
+    volumes:
+      - /lib/modules:/lib/modules:ro

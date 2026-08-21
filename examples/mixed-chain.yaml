@@ -1,0 +1,15 @@
+apiVersion: nestwg.io/v1alpha1
+kind: Chain
+metadata:
+  name: mixed-example
+spec:
+  baseMTU: 1500
+  dns:
+    - 1.1.1.1
+  hops:
+    - name: self-hosted-entry
+      wireguardConfig: /etc/nestwg/self-hosted-entry.conf
+      outerFamily: ipv4
+    - name: commercial-exit
+      wireguardConfig: /etc/nestwg/commercial-exit.conf
+      outerFamily: ipv4

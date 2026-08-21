@@ -1,0 +1,12 @@
+.git
+.idea
+.vscode
+dist
+nestwg
+*.conf
+*.key
+*.pem
+*.test
+*.out
+.env
+.env.*

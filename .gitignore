@@ -1,0 +1,6 @@
+/nestwg
+/dist/
+*.test
+*.out
+.idea/
+.vscode/

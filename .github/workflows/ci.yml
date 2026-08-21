@@ -1,0 +1,49 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.27.x"
+          cache: true
+      - name: Format
+        run: test -z "$(gofmt -l .)"
+      - name: Test
+        run: go test ./...
+      - name: Race test
+        run: go test -race ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Build
+        run: go build ./cmd/nestwg
+      - name: Build and inspect Debian package
+        run: |
+          make package-deb PACKAGE_VERSION=0.0.0-ci PACKAGE_ARCH=amd64
+          dpkg-deb --info dist/nestwg_0.0.0-ci_amd64.deb
+          mkdir -p /tmp/nestwg-package-test
+          dpkg-deb --extract dist/nestwg_0.0.0-ci_amd64.deb /tmp/nestwg-package-test
+          test "$(/tmp/nestwg-package-test/usr/bin/nestwg version)" = "nestwg 0.0.0-ci"
+
+  integration:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-22.04, ubuntu-24.04]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Privileged nested WireGuard lab
+        run: make integration

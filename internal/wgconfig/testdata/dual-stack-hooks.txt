@@ -1,0 +1,20 @@
+[Interface]
+PrivateKey = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+Address = 10.64.0.2/32, fd7a:115c:a1e0::2/128
+DNS = 10.64.0.1, fd7a:115c:a1e0::1
+MTU = 1380
+Table = auto
+ListenPort = 51820
+FwMark = 51820
+SaveConfig = false
+PreUp = synthetic-command-that-must-never-run
+PostUp = synthetic-command-that-must-never-run
+PreDown = synthetic-command-that-must-never-run
+PostDown = synthetic-command-that-must-never-run
+
+[Peer]
+PublicKey = AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=
+PresharedKey = AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=
+Endpoint = [2001:db8:100::20]:51820
+AllowedIPs = 0.0.0.0/0, ::/0
+PersistentKeepalive = off

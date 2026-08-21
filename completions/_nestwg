@@ -1,0 +1,35 @@
+#compdef nestwg
+
+local -a commands
+commands=(
+  'validate:validate a chain and its WireGuard files'
+  'plan:print the pinned executable plan'
+  'up:create a persistent nested VPN chain'
+  'down:remove a chain'
+  'status:show live chain status'
+  'exec:run a command in a payload network'
+  'shell:open a shell in a payload network'
+  'doctor:check Linux networking prerequisites'
+  'recover:remove process-free orphan namespaces'
+  'version:print the version'
+)
+
+_arguments -C \
+  '1:command:->command' \
+  '*::argument:->args'
+
+case "$state" in
+  command)
+    _describe command commands
+    ;;
+  args)
+    case "$words[2]" in
+      validate|plan)
+        _files -g '*.yaml'
+        ;;
+      up)
+        _arguments '--wait[wait for handshakes]:duration:' '*:chain file:_files -g "*.yaml"'
+        ;;
+    esac
+    ;;
+esac

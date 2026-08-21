@@ -1,0 +1,8 @@
+[Interface]
+PrivateKey = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+Address = 100.64.0.8/32
+
+[Peer]
+PublicKey = AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=
+Endpoint = gateway.example.invalid:51820
+AllowedIPs = 0.0.0.0/0

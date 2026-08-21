@@ -1,0 +1,109 @@
+.TH NESTWG 1 "August 2026" "nestwg" "User Commands"
+.SH NAME
+nestwg \- create and manage nested WireGuard VPN chains
+.SH SYNOPSIS
+.B nestwg validate
+.IR chain.yaml
+.br
+.B nestwg plan
+.IR chain.yaml
+.br
+.B nestwg up
+.RB [ --wait " duration]
+.IR chain.yaml
+.br
+.B nestwg down
+.IR chain-name
+.br
+.B nestwg status
+.RI [ chain-name ]
+.br
+.B nestwg exec
+.I chain-name
+.B --
+.I command
+.RI [ arguments... ]
+.br
+.B nestwg shell
+.IR chain-name
+.br
+.B nestwg doctor
+.br
+.B nestwg recover
+.I chain-name
+.br
+.B nestwg version
+.SH DESCRIPTION
+.B nestwg
+constructs ordered WireGuard tunnels inside Linux network namespaces. Each
+inner WireGuard socket is born in the plaintext network exposed by the
+previous hop, forcing its encrypted transport through that hop. The payload
+network contains only loopback and the innermost WireGuard interface.
+.PP
+The chain document orders hops from the outermost entry to the innermost exit.
+Endpoint hostnames are resolved and pinned before privileged network changes.
+Plans and runtime state do not contain private or preshared keys.
+.SH COMMANDS
+.TP
+.B validate
+Strictly parse the chain and referenced WireGuard files without changing the
+host.
+.TP
+.B plan
+Print the executable JSON plan, including pinned endpoints, namespace names,
+interface addresses, allowed routes, and calculated MTUs.
+.TP
+.B up
+Create a persistent chain. With
+.BR --wait ,
+wait until every hop has completed a WireGuard handshake or the duration
+expires. A readiness timeout leaves the configured chain up for inspection.
+.TP
+.B down
+Remove a chain in reverse order. Teardown refuses to proceed while a
+NestWG-managed payload command holds a shared lifecycle lock.
+.TP
+.B status
+Show active chains and live handshake and transfer information.
+.TP
+.B exec
+Run one command in the fail-closed payload network with private DNS mounts.
+When invoked via sudo, the command runs as the invoking user.
+.TP
+.B shell
+Open the invoking user's shell in the payload network.
+.TP
+.B doctor
+Check privileges, netlink access, kernel WireGuard support, resolver mounting,
+and runtime-state security.
+.TP
+.B recover
+Remove strictly named, process-free orphan namespaces after a chain state file
+has been lost. Recovery refuses active namespaces and chains that still have a
+state record.
+.SH FILES
+.TP
+.I /run/nestwg
+Root-owned mode-0700 locks, recovery state, and per-chain resolver files.
+.TP
+.I /run/netns/nwg-<chain>-*
+Named network namespaces owned by a chain.
+.SH SECURITY
+WireGuard configuration files must not be accessible by group or other users.
+Hook commands from wg-quick files are ignored and never executed. Application
+protocol encryption such as TLS remains necessary; the exit can observe
+plaintext application traffic and final destinations.
+.PP
+NestWG is pre-release software and must not yet be relied upon as a security or
+anonymity boundary. See SECURITY.md and docs/threat-model.md.
+.SH EXIT STATUS
+Lifecycle and inspection commands return zero on success and nonzero on
+validation, readiness, privilege, or kernel-operation failure. The
+.B exec
+and
+.B shell
+commands preserve the payload process exit status.
+.SH SEE ALSO
+.BR wg (8),
+.BR ip-netns (8),
+.BR wireguard (8)

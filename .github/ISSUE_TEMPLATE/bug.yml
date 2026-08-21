@@ -1,0 +1,46 @@
+name: Bug report
+description: Report incorrect lifecycle, routing, compatibility, or CLI behavior
+labels: [bug, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: Never include private keys, preshared keys, provider credentials, or identifying packet captures.
+  - type: input
+    id: version
+    attributes:
+      label: NestWG version or commit
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Distribution, kernel, architecture, WireGuard implementation, and relevant network manager.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Provide a minimal redacted chain and exact commands.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior
+    validations:
+      required: true
+  - type: checkboxes
+    id: security
+    attributes:
+      label: Security check
+      options:
+        - label: This report does not describe a vulnerability or traffic leak that should be reported privately.
+          required: true
