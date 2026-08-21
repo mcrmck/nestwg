@@ -6,15 +6,15 @@ _nestwg() {
     command="${COMP_WORDS[1]}"
 
     if (( COMP_CWORD == 1 )); then
-        COMPREPLY=( $(compgen -W 'validate plan up down status exec shell doctor recover version' -- "$current") )
+        COMPREPLY=( $(compgen -W 'connect validate plan up down status exec shell doctor recover version' -- "$current") )
         return
     fi
-    if [[ "$command" == up && "$previous" == --wait ]]; then
+    if [[ ( "$command" == connect || "$command" == up ) && "$previous" == --wait ]]; then
         COMPREPLY=( $(compgen -W '5s 10s 30s 1m' -- "$current") )
         return
     fi
     case "$command" in
-        validate|plan|up)
+        connect|validate|plan|up)
             COMPREPLY=( $(compgen -f -- "$current") )
             ;;
     esac

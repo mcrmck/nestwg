@@ -5,6 +5,9 @@ Versioning once the first version is tagged.
 
 ## Unreleased
 
+- Added a VPN-first `connect` command that initiates and verifies every nested
+  handshake, opens the user's terminal with VPN identity variables, and
+  disconnects on exit.
 - Added chain and WireGuard configuration validation with secret-safe errors.
 - Added inspectable plans with pinned endpoints, routes, namespaces, and MTUs.
 - Added persistent `up`, `down`, `status`, `exec`, and `shell` commands.

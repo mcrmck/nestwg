@@ -310,6 +310,23 @@ assert_lab_namespaces_present
 nestwg down lab
 assert_lab_absent
 
+# The primary terminal workflow must own the whole lifecycle: connect every
+# hop, identify the VPN shell, carry traffic, and remove the VPN on shell exit.
+# Remove keepalives first to prove that connect actively initiates handshakes.
+for config in entry.conf exit.conf final.conf; do
+    sed -i '/^PersistentKeepalive =/d' "$KEY_DIR/$config"
+done
+printf '%s\n' \
+    'test "$NESTWG_VPN" = 1' \
+    'test "$NESTWG_CHAIN" = lab' \
+    'ip route get 203.0.114.2 | grep -q "dev nwg2"' \
+    'ping -c 1 -W 2 203.0.114.2 >/dev/null' \
+    | SHELL=/bin/sh nsenter --net="/run/netns/$C0" nestwg connect "$KEY_DIR/chain.yaml"
+assert_lab_absent
+for config in entry.conf exit.conf final.conf; do
+    printf '\nPersistentKeepalive = 5\n' >>"$KEY_DIR/$config"
+done
+
 # NestWG creates all clients, placing each interface one network layer inward
 # while its encrypted UDP socket remains in its birth namespace.
 nsenter --net="/run/netns/$C0" nestwg up --wait 10s "$KEY_DIR/chain.yaml"

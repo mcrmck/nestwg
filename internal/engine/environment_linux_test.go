@@ -4,10 +4,22 @@ package engine
 
 import (
 	"os/user"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
 )
+
+func TestMergedEnvironment(t *testing.T) {
+	got := mergedEnvironment([]string{"PATH=/bin", "NESTWG_CHAIN=old", "TERM=xterm"}, map[string]string{
+		"NESTWG_VPN":   "1",
+		"NESTWG_CHAIN": "example",
+	})
+	want := []string{"PATH=/bin", "TERM=xterm", "NESTWG_CHAIN=example", "NESTWG_VPN=1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("merged environment = %#v, want %#v", got, want)
+	}
+}
 
 func TestInvokingUserEnvironmentRestoresIdentityVariables(t *testing.T) {
 	account, err := user.Current()
