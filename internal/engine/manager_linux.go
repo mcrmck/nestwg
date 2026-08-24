@@ -10,19 +10,15 @@ import (
 	"net/netip"
 	"os"
 	"os/exec"
-	"os/signal"
-	"os/user"
 	"path/filepath"
 	goruntime "runtime"
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
-	"golang.org/x/sys/unix"
 	"golang.zx2c4.com/wireguard/wgctrl"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
@@ -58,11 +54,11 @@ type HopStatus struct {
 }
 
 type ChainStatus struct {
-	Chain      state.Chain
-	Ready      bool
-	Hops       []HopStatus
-	Attachment AttachmentStatus
-	Problem    string
+	Chain       state.Chain
+	Ready       bool
+	Hops        []HopStatus
+	HostRouting HostRoutingStatus
+	Problem     string
 }
 
 type DoctorCheck struct {
@@ -71,7 +67,7 @@ type DoctorCheck struct {
 	Message string
 }
 
-func (m *Manager) Up(ctx context.Context, chainPath string) (*state.Chain, error) {
+func (m *Manager) Up(ctx context.Context, chainPath string, hostRouting config.HostRouting) (*state.Chain, error) {
 	if os.Geteuid() != 0 {
 		return nil, errors.New("up requires root privileges (try sudo)")
 	}
@@ -82,6 +78,7 @@ func (m *Manager) Up(ctx context.Context, chainPath string) (*state.Chain, error
 	if err := document.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid chain: %w", err)
 	}
+	document.Spec.HostRouting = hostRouting
 	chainPlan, err := m.Plan(ctx, document)
 	if err != nil {
 		return nil, err
@@ -184,8 +181,14 @@ func (m *Manager) Down(name string) error {
 	if err != nil {
 		return err
 	}
-	if chain.Attachment != nil {
-		return fmt.Errorf("VPN %q has protected host routes; run `nestwg detach %s` before taking it down", name, name)
+	if chain.HostRouting != nil {
+		if err := removeHostRoutingKernel(chain); err != nil {
+			return fmt.Errorf("remove host routing for VPN %q: %w; cleanup state retained for retry", name, err)
+		}
+		chain.HostRouting = nil
+		if err := m.Store.Save(chain); err != nil {
+			return fmt.Errorf("record host-routing removal: %w", err)
+		}
 	}
 	for _, namespace := range chain.Namespaces {
 		pids, err := namespacePIDs(namespace)
@@ -306,8 +309,12 @@ func (m *Manager) Doctor() []DoctorCheck {
 		handle.Close()
 	}
 
-	_, err = filepath.EvalSymlinks("/etc/resolv.conf")
-	checks = append(checks, DoctorCheck{Name: "resolver mount target", OK: err == nil, Message: errorMessage(err)})
+	for _, command := range []string{"iptables", "ip6tables"} {
+		_, err = exec.LookPath(command)
+		checks = append(checks, DoctorCheck{Name: command + " command", OK: err == nil, Message: errorMessage(err)})
+	}
+	_, err = os.Stat(srcValidMarkPath)
+	checks = append(checks, DoctorCheck{Name: "policy routing sysctl", OK: err == nil, Message: errorMessage(err)})
 	_, err = m.Store.List()
 	checks = append(checks, DoctorCheck{Name: "secure runtime state", OK: err == nil, Message: errorMessage(err)})
 	return checks
@@ -319,10 +326,10 @@ func (m *Manager) Inspect(name string) (*ChainStatus, error) {
 		return nil, err
 	}
 	result := &ChainStatus{Chain: *chain, Ready: chain.Phase == state.PhaseActive}
-	result.Attachment = m.InspectAttachment(chain)
-	if result.Attachment.Problem != "" {
+	result.HostRouting = m.InspectHostRouting(chain)
+	if result.HostRouting.Problem != "" {
 		result.Ready = false
-		result.Problem = result.Attachment.Problem
+		result.Problem = result.HostRouting.Problem
 	}
 	for _, namespace := range chain.Namespaces {
 		handle, err := netns.GetFromName(namespace)
@@ -338,8 +345,8 @@ func (m *Manager) Inspect(name string) (*ChainStatus, error) {
 		interfaceName := hop.InterfaceName
 		var device *wgtypes.Device
 		var err error
-		if chain.Attachment != nil && index == len(chain.Hops)-1 {
-			interfaceName = chain.Attachment.HostInterface
+		if chain.HostRouting != nil && index == len(chain.Hops)-1 {
+			interfaceName = chain.HostRouting.HostInterface
 			hopStatus.InterfaceName = interfaceName
 			device, err = currentWireGuardDevice(interfaceName)
 		} else {
@@ -482,142 +489,6 @@ func handshakeProbeAddress(resolvers []string, allowed []netip.Prefix) netip.Add
 		return address
 	}
 	return netip.Addr{}
-}
-
-func (m *Manager) Exec(name string, argv []string) error {
-	return m.ExecWithEnv(name, argv, nil)
-}
-
-// ExecWithEnv runs argv through a connected chain with the supplied environment
-// values added or replaced for the payload process.
-func (m *Manager) ExecWithEnv(name string, argv []string, values map[string]string) error {
-	if len(argv) == 0 {
-		return errors.New("no command specified")
-	}
-	if os.Geteuid() != 0 {
-		return errors.New("exec requires root privileges (try sudo)")
-	}
-	unlock, err := m.Store.RLock(name)
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	executable, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	helperArguments := append([]string{"__exec", name, "--"}, argv...)
-	command := exec.Command(executable, helperArguments...)
-	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
-	command.Env = mergedEnvironment(os.Environ(), values)
-	if err := command.Start(); err != nil {
-		return err
-	}
-	signals := make(chan os.Signal, 4)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for received := range signals {
-			_ = command.Process.Signal(received)
-		}
-	}()
-	waitErr := command.Wait()
-	signal.Stop(signals)
-	close(signals)
-	<-done
-	return waitErr
-}
-
-func mergedEnvironment(environment []string, values map[string]string) []string {
-	if len(values) == 0 {
-		return environment
-	}
-	result := make([]string, 0, len(environment)+len(values))
-	for _, item := range environment {
-		key, _, found := strings.Cut(item, "=")
-		if _, replace := values[key]; found && replace {
-			continue
-		}
-		result = append(result, item)
-	}
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		result = append(result, key+"="+values[key])
-	}
-	return result
-}
-
-// EnterAndExec is the internal half of Exec. It enters both the payload
-// network and a private mount namespace, installs the chain resolver, drops
-// sudo privileges, and replaces itself with the requested command.
-func (m *Manager) EnterAndExec(name string, argv []string) error {
-	if os.Geteuid() != 0 {
-		return errors.New("payload entry requires root privileges")
-	}
-	if len(argv) == 0 {
-		return errors.New("no command specified")
-	}
-	chain, err := m.Store.Load(name)
-	if err != nil {
-		return fmt.Errorf("load chain %q: %w", name, err)
-	}
-	if chain.Phase != state.PhaseActive {
-		return fmt.Errorf("chain %q is not ready (phase %s)", name, chain.Phase)
-	}
-	if chain.Attachment != nil {
-		return fmt.Errorf("VPN %q is attached to the host; run commands normally or detach it before using exec/shell", name)
-	}
-	commandPath, err := exec.LookPath(argv[0])
-	if err != nil {
-		return err
-	}
-	ns, err := netns.GetFromName(chain.PayloadNamespace)
-	if err != nil {
-		return fmt.Errorf("open payload network for %q: %w", name, err)
-	}
-	defer ns.Close()
-
-	goruntime.LockOSThread()
-	defer goruntime.UnlockOSThread()
-	if err := netns.Set(ns); err != nil {
-		return fmt.Errorf("enter payload network: %w", err)
-	}
-	if err := unix.Unshare(unix.CLONE_NEWNS); err != nil {
-		return fmt.Errorf("create private mount namespace: %w", err)
-	}
-	if err := unix.Mount("", "/", "", unix.MS_REC|unix.MS_PRIVATE, ""); err != nil {
-		return fmt.Errorf("make mounts private: %w", err)
-	}
-	resolverTarget, err := filepath.EvalSymlinks("/etc/resolv.conf")
-	if err != nil {
-		return fmt.Errorf("resolve /etc/resolv.conf: %w", err)
-	}
-	if err := unix.Mount(chain.ResolverFile, resolverTarget, "", unix.MS_BIND, ""); err != nil {
-		return fmt.Errorf("install payload DNS configuration: %w", err)
-	}
-	if credential := invokingUserCredential(); credential != nil {
-		environment := invokingUserEnvironment(os.Environ(), credential.Uid)
-		groups := make([]int, len(credential.Groups))
-		for index, group := range credential.Groups {
-			groups[index] = int(group)
-		}
-		if err := unix.Setgroups(groups); err != nil {
-			return fmt.Errorf("drop supplementary groups: %w", err)
-		}
-		if err := unix.Setgid(int(credential.Gid)); err != nil {
-			return fmt.Errorf("drop group privileges: %w", err)
-		}
-		if err := unix.Setuid(int(credential.Uid)); err != nil {
-			return fmt.Errorf("drop user privileges: %w", err)
-		}
-		return unix.Exec(commandPath, argv, environment)
-	}
-	return unix.Exec(commandPath, argv, os.Environ())
 }
 
 func (m *Manager) prepare(chainPlan *plan.Chain) ([]preparedHop, error) {
@@ -983,56 +854,4 @@ func namespacePIDs(namespace string) ([]int, error) {
 	}
 	sort.Ints(pids)
 	return pids, nil
-}
-
-func invokingUserCredential() *syscall.Credential {
-	uidText, gidText := os.Getenv("SUDO_UID"), os.Getenv("SUDO_GID")
-	if uidText == "" || gidText == "" {
-		return nil
-	}
-	uid, uidErr := strconv.ParseUint(uidText, 10, 32)
-	gid, gidErr := strconv.ParseUint(gidText, 10, 32)
-	if uidErr != nil || gidErr != nil {
-		return nil
-	}
-	credential := &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid)}
-	account, err := user.LookupId(uidText)
-	if err != nil {
-		return credential
-	}
-	groupIDs, err := account.GroupIds()
-	if err != nil {
-		return credential
-	}
-	for _, groupID := range groupIDs {
-		parsed, err := strconv.ParseUint(groupID, 10, 32)
-		if err == nil {
-			credential.Groups = append(credential.Groups, uint32(parsed))
-		}
-	}
-	return credential
-}
-
-func invokingUserEnvironment(environment []string, uid uint32) []string {
-	account, err := user.LookupId(strconv.FormatUint(uint64(uid), 10))
-	if err != nil {
-		return environment
-	}
-	values := map[string]string{
-		"HOME":    account.HomeDir,
-		"USER":    account.Username,
-		"LOGNAME": account.Username,
-	}
-	result := make([]string, 0, len(environment)+len(values))
-	for _, item := range environment {
-		key, _, found := strings.Cut(item, "=")
-		if _, replace := values[key]; found && replace {
-			continue
-		}
-		result = append(result, item)
-	}
-	for _, key := range []string{"HOME", "USER", "LOGNAME"} {
-		result = append(result, key+"="+values[key])
-	}
-	return result
 }

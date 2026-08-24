@@ -15,11 +15,12 @@ import (
 const defaultBaseMTU = 1500
 
 type Chain struct {
-	Name             string `json:"name"`
-	BaseMTU          int    `json:"baseMTU"`
-	PayloadNamespace string `json:"payloadNamespace"`
-	PayloadMTU       int    `json:"payloadMTU"`
-	Hops             []Hop  `json:"hops"`
+	Name             string             `json:"name"`
+	BaseMTU          int                `json:"baseMTU"`
+	HostRouting      config.HostRouting `json:"hostRouting"`
+	PayloadNamespace string             `json:"payloadNamespace"`
+	PayloadMTU       int                `json:"payloadMTU"`
+	Hops             []Hop              `json:"hops"`
 }
 
 type Hop struct {
@@ -51,6 +52,7 @@ func Build(document *config.Document) (*Chain, error) {
 	result := &Chain{
 		Name:             document.Metadata.Name,
 		BaseMTU:          baseMTU,
+		HostRouting:      document.Spec.HostRouting,
 		PayloadNamespace: payloadNamespace,
 		Hops:             make([]Hop, 0, len(document.Spec.Hops)),
 	}
@@ -131,6 +133,30 @@ func BuildResolved(ctx context.Context, document *config.Document, resolver IPRe
 		}
 	}
 	finalAllowed := configs[len(configs)-1].Peers[0].AllowedIPs
+	switch document.Spec.HostRouting.Mode {
+	case config.HostRoutingDefault:
+		hasDefault := false
+		for _, allowed := range finalAllowed {
+			if allowed.Bits() == 0 {
+				hasDefault = true
+				break
+			}
+		}
+		if !hasDefault {
+			return nil, fmt.Errorf("exit hop %q has no default AllowedIPs for default host routing", result.Hops[len(result.Hops)-1].Name)
+		}
+	case config.HostRoutingSelected:
+		for _, value := range document.Spec.HostRouting.Routes {
+			prefix, err := netip.ParsePrefix(value)
+			if err != nil {
+				return nil, err
+			}
+			prefix = prefix.Masked()
+			if !prefixesContainPrefix(finalAllowed, prefix) {
+				return nil, fmt.Errorf("exit hop %q AllowedIPs do not cover host route %s", result.Hops[len(result.Hops)-1].Name, prefix)
+			}
+		}
+	}
 	for _, resolver := range document.Spec.DNS {
 		address, err := netip.ParseAddr(resolver)
 		if err != nil {
@@ -173,6 +199,15 @@ func resolveEndpoint(ctx context.Context, resolver IPResolver, endpoint, family 
 func prefixesContain(prefixes []netip.Prefix, address netip.Addr) bool {
 	for _, prefix := range prefixes {
 		if prefix.Contains(address) {
+			return true
+		}
+	}
+	return false
+}
+
+func prefixesContainPrefix(prefixes []netip.Prefix, wanted netip.Prefix) bool {
+	for _, prefix := range prefixes {
+		if prefix.Addr().BitLen() == wanted.Addr().BitLen() && prefix.Bits() <= wanted.Bits() && prefix.Contains(wanted.Addr()) {
 			return true
 		}
 	}

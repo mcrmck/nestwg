@@ -17,8 +17,9 @@ or namespace ownership must include a focused failure or adversarial test in
 addition to the privileged integration lab.
 
 Privileged integration tests must use project-specific namespace and interface
-names and clean up only resources they created. Tests must not change the
-developer host's default route.
+names and clean up only resources they created. Default-route tests must run
+inside the disposable simulated-client network namespace, never on the
+developer host.
 
 Security issues must not initially be filed as public exploit reports. Follow
 the private reporting process in `SECURITY.md`.

@@ -21,6 +21,9 @@ metadata:
 spec:
   baseMTU: 1500
   dns: [1.1.1.1, 2606:4700:4700::1111]
+  hostRouting:
+    mode: selected
+    routes: [10.0.0.0/8]
   hops:
     - name: entry
       wireguardConfig: entry.conf
@@ -66,7 +69,7 @@ func TestValidateRejectsInvalidWireGuardConfig(t *testing.T) {
 		APIVersion: APIVersion,
 		Kind:       Kind,
 		Metadata:   Metadata{Name: "example"},
-		Spec: Spec{Hops: []Hop{
+		Spec: Spec{HostRouting: HostRouting{Mode: HostRoutingIsolated}, Hops: []Hop{
 			{Name: "entry", WireGuardConfigPath: invalidPath, OuterFamily: "ipv4"},
 			{Name: "exit", WireGuardConfigPath: invalidPath, OuterFamily: "ipv4"},
 		}},
@@ -93,9 +96,45 @@ func TestValidateReportsMultipleProblems(t *testing.T) {
 	if err == nil {
 		t.Fatal("Validate() unexpectedly succeeded")
 	}
-	for _, expected := range []string{"apiVersion", "metadata.name", "at least two hops", "wireguardConfig", "outerFamily"} {
+	for _, expected := range []string{"apiVersion", "metadata.name", "hostRouting", "at least two hops", "wireguardConfig", "outerFamily"} {
 		if !strings.Contains(err.Error(), expected) {
 			t.Errorf("Validate() error %q does not contain %q", err, expected)
 		}
+	}
+}
+
+func TestHostRoutingValidation(t *testing.T) {
+	valid := []HostRouting{
+		{Mode: HostRoutingDefault},
+		{Mode: HostRoutingIsolated},
+		{Mode: HostRoutingSelected, Routes: []string{"10.0.0.0/8", "2001:db8::/32"}},
+	}
+	for _, routing := range valid {
+		if err := routing.Validate(); err != nil {
+			t.Errorf("Validate(%#v) = %v", routing, err)
+		}
+	}
+	invalid := []HostRouting{
+		{},
+		{Mode: "other"},
+		{Mode: HostRoutingDefault, Routes: []string{"10.0.0.0/8"}},
+		{Mode: HostRoutingSelected},
+		{Mode: HostRoutingSelected, Routes: []string{"0.0.0.0/0"}},
+		{Mode: HostRoutingSelected, Routes: []string{"10.0.0.1/8", "10.0.0.0/8"}},
+	}
+	for _, routing := range invalid {
+		if err := routing.Validate(); err == nil {
+			t.Errorf("Validate(%#v) unexpectedly succeeded", routing)
+		}
+	}
+}
+
+func TestDocumentRejectsDNSInIsolatedMode(t *testing.T) {
+	document := &Document{Spec: Spec{
+		DNS:         []string{"1.1.1.1"},
+		HostRouting: HostRouting{Mode: HostRoutingIsolated},
+	}}
+	if err := document.Validate(); err == nil || !strings.Contains(err.Error(), "not used with isolated") {
+		t.Fatalf("Validate() error = %v", err)
 	}
 }

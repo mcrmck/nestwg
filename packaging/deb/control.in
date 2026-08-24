@@ -7,8 +7,9 @@ Maintainer: NestWG contributors <mcrmck@users.noreply.github.com>
 Homepage: https://github.com/mcrmck/nestwg
 Vcs-Git: https://github.com/mcrmck/nestwg.git
 Vcs-Browser: https://github.com/mcrmck/nestwg
-Suggests: wireguard-tools
+Depends: iptables
+Suggests: wireguard-tools, openresolv | systemd-resolved
 Description: persistent nested WireGuard VPN chains
  NestWG composes two or more WireGuard tunnels inside Linux network
- namespaces. Applications run in an isolated, fail-closed payload network
- while lifecycle commands manage the chain as one named resource.
+ namespaces and exposes the innermost interface to ordinary host applications
+ with default or selected fail-closed routing.

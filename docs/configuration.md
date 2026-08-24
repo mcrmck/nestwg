@@ -43,6 +43,10 @@ spec:
   baseMTU: 1500
   dns:
     - 10.64.0.1
+  hostRouting:
+    mode: selected
+    routes:
+      - 10.0.0.0/8
   hops:
     - name: home-entry
       wireguardConfig: /etc/nestwg/home.conf
@@ -55,8 +59,20 @@ spec:
 Fields:
 
 - `metadata.name` identifies runtime resources and must be unique on the host.
+
+A bare command-line chain name is loaded from `/etc/nestwg/<name>.yaml`.
+Explicit relative or absolute paths are also accepted. For example,
+`nestwg up office` and `nestwg up /etc/nestwg/office.yaml` select the same
+configuration. `down` accepts either the active chain name or a YAML path and
+uses its `metadata.name`.
 - `spec.baseMTU` is the starting path MTU. It defaults to 1500.
-- `spec.dns` lists resolvers made available only inside the payload namespace.
+- `spec.dns` lists host resolvers installed while the VPN is up. NestWG uses
+  `resolvconf` or systemd-resolved's `resolvectl` and restores the previous
+  resolver state during `down`. Omitting it leaves host DNS unchanged; in
+  default mode that may disclose queries outside the VPN. It is rejected with
+  isolated mode because no host interface consumes it.
+- `spec.hostRouting.mode` is `default`, `selected`, or `isolated`.
+- `spec.hostRouting.routes` is required only for `selected` mode.
 - `spec.hops` is ordered from outermost/entry to innermost/exit.
 - `wireguardConfig` points to a standard WireGuard or `wg-quick` configuration.
 - `outerFamily` records whether that hop's public endpoint is reached over
@@ -71,7 +87,7 @@ The importer validates interface keys, addresses, peer keys, endpoint, allowed
 IPs, optional preshared key, and persistent keepalive. The initial format
 requires exactly one peer per hop. It does not execute
 arbitrary `PreUp`, `PostUp`, `PreDown`, or `PostDown` commands from imported
-files. Provider DNS settings on intermediate hops are ignored; application DNS
+files. Provider DNS settings on intermediate hops are ignored; host DNS
 is an explicit chain-level decision.
 
 Private key files and chain files should be readable only by their owner.
@@ -90,24 +106,52 @@ addresses and routes, preshared keys, disabled keepalives, and `wg-quick`
 metadata and hooks. Fixtures use synthetic keys and do not imply endorsement
 or certification by any provider.
 
-## Selective host routes
+## Host routing
 
-Host attachment is configured at runtime, independently of the chain file:
+Default mode sends every supported address family through the nested VPN:
 
-```sh
-sudo nestwg up --wait 10s mixed-example.yaml
-sudo nestwg attach mixed-example --route 10.0.0.0/8 --route 203.0.113.7/32
+```yaml
+hostRouting:
+  mode: default
+```
+
+The final peer must contain `0.0.0.0/0`, `::/0`, or both in `AllowedIPs`.
+NestWG installs a dedicated policy-routing table rather than replacing the
+host's existing default route. The outer WireGuard socket receives the same
+firewall mark as that table, allowing its encrypted packets to retain the
+physical route. Unmarked non-local traffic that does not leave through the
+visible NestWG interface is rejected by an OUTPUT kill switch.
+
+Selected mode routes only explicit destinations:
+
+```yaml
+hostRouting:
+  mode: selected
+  routes:
+    - 10.0.0.0/8
+    - 203.0.113.7/32
 ```
 
 Every requested CIDR must be wholly contained by an `AllowedIPs` prefix on the
 final WireGuard peer. NestWG canonicalizes CIDRs, rejects duplicates, and
 refuses to replace an existing exact host route. Less-specific routes,
-including the ordinary default route, are left intact.
+including the ordinary default route, remain intact. Each active selected
+route has a lower-priority unreachable alternative so interface loss remains
+fail-closed.
 
-The attachment applies to destination routing for all host applications. It
-does not select traffic by process, user, domain name, or port. An explicit
-`nestwg detach mixed-example` removes both the active VPN routes and their
-fail-closed unreachable alternatives. The preview rejects IPv4 and IPv6
-default routes in attachment mode; use `connect` for a fail-closed full-tunnel
-session. While attached, run applications normally on the host; `exec` and
-`shell` resume after `detach` returns the exit device to the payload network.
+Host routing applies to all applications. It does not select traffic by
+process, user, domain name, or port. `nestwg down` removes the host interface,
+active routes, policy rules, firewall rules, DNS configuration, and internal
+namespaces transactionally.
+
+Isolated mode constructs the chain without exposing it to host traffic. It is
+intended for diagnostics and integration work:
+
+```yaml
+hostRouting:
+  mode: isolated
+```
+
+The configured mode can be overridden for one invocation with
+`--default-route`, repeated `--route CIDR`, or `--isolated`. These options are
+mutually exclusive.

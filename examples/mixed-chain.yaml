@@ -6,6 +6,8 @@ spec:
   baseMTU: 1500
   dns:
     - 1.1.1.1
+  hostRouting:
+    mode: default
   hops:
     - name: self-hosted-entry
       wireguardConfig: /etc/nestwg/self-hosted-entry.conf

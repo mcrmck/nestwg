@@ -1,18 +1,18 @@
 # Roadmap
 
 NestWG aims to be a provider-neutral, fail-closed Linux VPN client for routing
-a terminal through nested WireGuard hops. Milestones describe required
+host traffic through nested WireGuard hops. Milestones describe required
 outcomes rather than promised dates.
 
 ## v0.1 — trustworthy preview
 
-- one-command `connect` terminal workflow plus persistent `up`, `down`,
-  `status`, `exec`, and `shell` lifecycle;
-- selective host CIDR attachment with explicit detach and fail-closed fallback
-  routes;
+- `wg-quick`-style `up`, `down`, and `status` lifecycle with one host-visible
+  interface and internal nested hops;
+- default-route policy routing with an outer-socket mark and OUTPUT kill switch;
+- selective host CIDR routing with fail-closed fallback routes;
 - route- and handshake-aware `diagnose` output;
 - pinned and inspectable endpoints, routes, namespaces, and MTUs;
-- private payload DNS and invoking-user privilege restoration;
+- host DNS integration through resolvconf and systemd-resolved;
 - transactional rollback and crash-recoverable state;
 - three-hop mixed IPv4/IPv6 integration tests proving the entry/middle/exit
   privacy split;
@@ -26,8 +26,8 @@ outcomes rather than promised dates.
 
 - provider-reported compatibility cases and expanded support tiers;
 - additional distribution packages and repository metadata.
-- reboot-persistent attachment policy and service integration;
-- application/cgroup-based routing built on the selective attachment model;
+- reboot-persistent host-routing policy and service integration;
+- application/cgroup-based routing built on the selected-route model;
 
 ## v1.0 — stable operational contract
 
@@ -38,5 +38,5 @@ outcomes rather than promised dates.
 - reproducible, signed packages and a maintained vulnerability policy.
 
 Provider account APIs, graphical interfaces, domain-based routing, and
-non-Linux clients remain later possibilities. They must not weaken the
-isolated mode or expand the privileged core without a clear security argument.
+non-Linux clients remain later possibilities. They must not weaken leak
+protection or expand the privileged core without a clear security argument.

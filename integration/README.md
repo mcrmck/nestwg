@@ -16,8 +16,8 @@ boundaries. The entry and middle captures must contain only the next opaque
 WireGuard flow, not the final destination. The exit capture must contain the
 final destination but must not contain the client's underlay address.
 
-The lab also runs `doctor`, checks the resolver file visible through `exec`,
-requires live handshakes before accepting `status` as ready, and injects a
+The lab also runs `doctor`, requires live handshakes before accepting `status`
+as ready, and injects a
 namespace collision before setup. An integration-only build then forces
 failures after every major state, namespace, WireGuard, address, link, and route
 operation and verifies complete rollback. It separately breaks rollback itself
@@ -26,12 +26,11 @@ prove `down` is safely retryable. Release binaries omit the failpoint code.
 The first two public endpoints use IPv4 and the innermost endpoint uses IPv6,
 exercising mixed-family route and MTU planning.
 
-It additionally attaches IPv4 and IPv6 host CIDRs, verifies ordinary host
-traffic remains unchanged, exercises both routes through all three tunnels,
-and then moves the
-exposed WireGuard device away from the host to prove the unreachable backup
-prevents default-route fallback. It verifies that `down` refuses protected
-routes and that explicit `detach` restores the device and ordinary routing.
+It additionally verifies selected IPv4 and IPv6 host routes, moves the exposed
+device away to prove their unreachable backups prevent fallback, and confirms
+that `down` restores ordinary routing. A separate phase enables IPv4/IPv6
+default routing and verifies the dedicated policy table, marked outer socket,
+OUTPUT kill switch, host traffic, and complete teardown.
 
 Run it on a Linux Docker host:
 

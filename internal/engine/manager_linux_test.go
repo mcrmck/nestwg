@@ -38,11 +38,36 @@ func TestParseRoutesRejectsMissingInvalidAndDuplicateRoutes(t *testing.T) {
 	}
 }
 
-func TestAttachmentInterfaceNameIsStableAndFitsLinuxLimit(t *testing.T) {
-	first := attachmentInterfaceName("example-with-a-long-name")
-	second := attachmentInterfaceName("example-with-a-long-name")
+func TestHostInterfaceNameIsStableAndFitsLinuxLimit(t *testing.T) {
+	first := hostInterfaceName("example-with-a-long-name")
+	second := hostInterfaceName("example-with-a-long-name")
 	if first != second || len(first) > 15 {
-		t.Fatalf("attachmentInterfaceName() = %q, %q", first, second)
+		t.Fatalf("hostInterfaceName() = %q, %q", first, second)
+	}
+}
+
+func TestHostInterfaceNameKeepsShortChainNameReadable(t *testing.T) {
+	if got, want := hostInterfaceName("lab"), "nwg-lab"; got != want {
+		t.Fatalf("hostInterfaceName() = %q, want %q", got, want)
+	}
+}
+
+func TestHostRoutingIdentifiersAreStableAndSeparated(t *testing.T) {
+	if first, second := hostRoutingTable("example"), hostRoutingTable("example"); first != second || first < defaultTableBase || first >= defaultTableBase+1000 {
+		t.Fatalf("hostRoutingTable(example) = %d, %d", first, second)
+	}
+	if priority := hostRoutingRulePriority("example"); priority < defaultRuleBase || priority >= defaultRuleBase+2000 || priority%2 != defaultRuleBase%2 {
+		t.Fatalf("hostRoutingRulePriority(example) = %d", priority)
+	}
+}
+
+func TestValidateHostDNSRoutesRequiresCoverage(t *testing.T) {
+	routes := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
+	if err := validateHostDNSRoutes([]string{"10.0.0.53"}, routes); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateHostDNSRoutes([]string{"1.1.1.1"}, routes); err == nil {
+		t.Fatal("unrouted DNS resolver unexpectedly accepted")
 	}
 }
 

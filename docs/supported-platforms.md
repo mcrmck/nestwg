@@ -9,7 +9,7 @@ mount namespaces plus the kernel WireGuard and netlink APIs.
 | --- | --- | --- |
 | Tested | Ubuntu 22.04 and 24.04, x86-64 | Race tests, vet, builds, and the privileged three-hop integration lab run in GitHub Actions. |
 | Build-tested | Linux arm64 | Every tagged release cross-builds a static binary and a Debian package; artifact structure is checked before release. |
-| Expected | Other current Linux distributions with kernel WireGuard and named network namespaces | The binary is static and does not depend on a distribution network manager, but these combinations are not yet CI-certified. |
+| Expected | Other current Linux distributions with kernel WireGuard and named network namespaces | Host routing also requires iptables-compatible tooling; configured DNS requires `resolvconf` or systemd-resolved. These combinations are not yet CI-certified. |
 | Unsupported | macOS, Windows, BSD, containers without the required kernel capabilities | The fail-closed namespace design is not implemented on these platforms. |
 
 Linux 5.6 or newer is the supported kernel baseline because WireGuard is part
@@ -18,8 +18,8 @@ backported WireGuard module may work, but is not part of the preview support
 contract.
 
 Run `sudo nestwg doctor` before creating a chain. It checks root privileges,
-netlink access, kernel WireGuard interface creation, resolver mount targets,
-and runtime-state security. A passing result establishes prerequisites, not
+netlink access, kernel WireGuard interface creation, iptables/ip6tables,
+policy-routing sysctls, and runtime-state security. A passing result establishes prerequisites, not
 provider reachability or anonymity.
 
 ## Reporting compatibility
