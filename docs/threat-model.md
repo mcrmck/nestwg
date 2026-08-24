@@ -35,10 +35,15 @@ WireGuard does not make plaintext HTTP confidential from the exit.
 - Opportunistic observers with visibility of only part of the path.
 - Configuration mistakes that could otherwise leak DNS or payload traffic.
 
-For host attachments, the fail-closed guarantee applies to explicitly attached
-destination CIDRs while NestWG's runtime state and unreachable routes remain
-installed. `down` cannot remove an attachment implicitly. An operator must use
-`detach` to deliberately restore normal routing. Root can still alter or delete
+Default routing does not implicitly replace host DNS. Operators must configure
+`spec.dns` when DNS queries also need to traverse the VPN; leaving it empty is
+an explicit leak-prone configuration choice.
+
+For selected routing, the fail-closed guarantee applies to configured
+destination CIDRs while NestWG's runtime state and unreachable backup routes
+remain installed. For default routing, it depends on the policy rules, marked
+outer WireGuard socket, and OUTPUT kill switch remaining intact. `down`
+deliberately restores ordinary routing and DNS. Root can still alter or delete
 routes, firewall rules, state, and namespaces; protection against a malicious
 or mistaken root operator is outside the model. Runtime state under `/run` does
 not survive reboot, so reboot-persistent routing policy is not yet claimed.

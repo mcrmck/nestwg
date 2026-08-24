@@ -1,46 +1,27 @@
 .TH NESTWG 1 "August 2026" "nestwg" "User Commands"
 .SH NAME
-nestwg \- create and manage nested WireGuard VPN chains
+nestwg \- expose nested WireGuard VPN chains as one host interface
 .SH SYNOPSIS
-.B nestwg connect
-.RB [ --wait " duration]
-.IR chain.yaml
-.br
 .B nestwg validate
-.IR chain.yaml
+.IR chain
 .br
 .B nestwg plan
-.IR chain.yaml
+.IR chain
 .br
 .B nestwg up
+.RB [ \-v | \-\-verbose ]
 .RB [ --wait " duration]
-.IR chain.yaml
-.br
-.B nestwg attach
-.I chain-name
-.B --route
-.I CIDR
-.RB [ --route " CIDR...]
-.br
-.B nestwg detach
-.IR chain-name
+.RB [ --default-route | --route " CIDR..." | --isolated ]
+.IR chain
 .br
 .B nestwg down
-.IR chain-name
+.RB [ \-v | \-\-verbose ]
+.IR chain
 .br
 .B nestwg status
 .RI [ chain-name ]
 .br
 .B nestwg diagnose
-.IR chain-name
-.br
-.B nestwg exec
-.I chain-name
-.B --
-.I command
-.RI [ arguments... ]
-.br
-.B nestwg shell
 .IR chain-name
 .br
 .B nestwg doctor
@@ -51,85 +32,102 @@ nestwg \- create and manage nested WireGuard VPN chains
 .B nestwg version
 .SH DESCRIPTION
 .B nestwg
-connects a Linux terminal or selected commands through ordered WireGuard VPN
-hops. Each inner VPN connection is forced through the previous hop. The normal
-host network is not changed, and selected VPN traffic cannot fall back to it if
-a hop fails.
+constructs ordered WireGuard hops and exposes only the innermost interface to
+ordinary host applications. Each inner VPN connection is forced through the
+previous hop. Internal network namespaces preserve the nested data path but
+are not part of the normal user interface.
 .PP
 The chain document orders hops from the outermost entry to the innermost exit.
 Endpoint hostnames are resolved and pinned before privileged network changes.
 Plans and runtime state do not contain private or preshared keys.
 .SH COMMANDS
 .TP
-.B connect
-Configure every VPN hop, initiate the nested handshakes, wait up to ten seconds
-by default, and open the invoking user's shell through the VPN. Set
-.B --wait 0
-to open the shell immediately. Exiting the shell disconnects and removes the
-VPN automatically. The shell receives NESTWG_VPN=1 and NESTWG_CHAIN=<name>.
-.TP
 .B validate
 Strictly parse the chain and referenced WireGuard files without changing the
 host.
 .TP
 .B plan
-Print the executable JSON plan, including pinned endpoints, interface
-addresses, allowed routes, implementation resources, and calculated MTUs.
+Print the executable JSON plan, including host-routing intent, pinned
+endpoints, interface addresses, allowed routes, implementation resources, and
+calculated MTUs.
 .TP
 .B up
-Create a persistent chain. With
-.BR --wait ,
-wait until every hop has completed a WireGuard handshake or the duration
-expires. A readiness timeout leaves the configured chain up for inspection.
+Create the nested chain, initiate its handshakes, expose the final WireGuard
+interface according to the configured host-routing mode, and return to the
+invoking shell. By default every hop must handshake within ten seconds. Set
+.B --wait 0
+to skip readiness waiting.
+.PP
+.B --default-route
+overrides the chain with full host routing for every address family covered by
+the final peer's default AllowedIPs. A dedicated policy table preserves the
+marked outer WireGuard socket's physical route. An OUTPUT kill switch rejects
+unmarked non-local traffic that would bypass the visible VPN device.
+.PP
+Repeated
+.B --route CIDR
+options override the chain with selected destination routes. Each route has a
+lower-priority unreachable alternative to prevent fallback after interface
+loss.
+.PP
+.B --isolated
+constructs the chain without exposing it to host traffic. This mode is for
+diagnostics and integration work. Routing overrides are mutually exclusive.
+.PP
+.B \-v, \-\-verbose
+prints lifecycle progress. Normal successful output is one concise line.
 .TP
 .B down
-Remove a chain in reverse order. Teardown refuses to proceed while a
-NestWG-managed payload command holds a shared lifecycle lock or while protected
-host routes are attached.
-.TP
-.B attach
-Expose the innermost WireGuard device to the host and route each supplied
-destination CIDR through it. The device socket remains inside the preceding
-VPN layer, preserving nesting without forwarding or NAT. Requested CIDRs must
-be covered by the exit peer AllowedIPs and must not replace existing exact
-routes. Every live route receives an unreachable backup so loss of the device
-cannot fall back to the normal default route.
-.TP
-.B detach
-Return the exit WireGuard device to the isolated payload network and remove
-active VPN routes and fail-closed unreachable routes. Ordinary host routing
-resumes for those destinations.
+Restore host DNS and routing, return the final interface to its internal
+namespace, and remove the chain in reverse order. Cleanup is retryable from
+the recorded recovery state. The argument may be an active chain name or the
+same YAML path passed to
+.BR up .
 .TP
 .B status
-Show active chains, live handshake and transfer information, host attachment
-state, and protected routes.
+Show active chains, live handshake and transfer information, the host-visible
+device, routing mode, and protected routes.
 .TP
 .B diagnose
-Check runtime construction, every hop handshake, host device state, active
-CIDR routes, and their fail-closed unreachable alternatives.
-.TP
-.B exec
-Run one command through the fail-closed VPN connection with private DNS.
-When invoked via sudo, the command runs as the invoking user.
-.TP
-.B shell
-Open the invoking user's shell through an already connected persistent VPN.
+Check runtime construction, every hop handshake, the host device, active
+routes, policy rules, and mode-specific leak protection.
 .TP
 .B doctor
-Check privileges, netlink access, kernel WireGuard support, resolver mounting,
-and runtime-state security.
+Check privileges, netlink access, kernel WireGuard support,
+iptables/ip6tables, policy-routing sysctls, and runtime-state security.
 .TP
 .B recover
 Remove strictly named, process-free orphan namespaces after a chain state file
 has been lost. Recovery refuses active namespaces and chains that still have a
 state record.
+.SH HOST ROUTING
+The chain's
+.B spec.hostRouting.mode
+is
+.BR default ,
+.BR selected ,
+or
+.BR isolated .
+Selected mode requires a non-empty routes list. Every host route and configured
+DNS resolver must be covered by the final peer's AllowedIPs. Selected routes
+affect all host processes by destination; process, user, domain, and port
+selection are not implemented.
+.PP
+When
+.B spec.dns
+is non-empty, NestWG configures the host-visible interface through resolvconf
+or systemd-resolved's resolvectl and reverts it during down.
 .SH FILES
 .TP
+.I /etc/nestwg/<chain>.yaml
+Conventional configuration path used when a command receives a bare chain
+name. Explicit relative and absolute YAML paths are also accepted.
+.TP
 .I /run/nestwg
-Root-owned mode-0700 locks, recovery state, and per-chain resolver files.
+Root-owned mode-0700 locks, recovery state, and resolver input files.
 .TP
 .I /run/netns/nwg-<chain>-*
-Named network namespaces owned by a chain.
+Named internal network namespaces owned by a chain.
 .SH SECURITY
 WireGuard configuration files must not be accessible by group or other users.
 Hook commands from wg-quick files are ignored and never executed. Application
@@ -139,15 +137,11 @@ plaintext application traffic and final destinations.
 NestWG is pre-release software and must not yet be relied upon as a security or
 anonymity boundary. See SECURITY.md and docs/threat-model.md.
 .SH EXIT STATUS
-Lifecycle and inspection commands return zero on success and nonzero on
-validation, readiness, privilege, or kernel-operation failure. The
-.B exec
-and
-.BR shell ,
-and
-.B connect
-commands preserve the payload process exit status.
+Commands return zero on success and nonzero on validation, readiness,
+privilege, or kernel-operation failure.
 .SH SEE ALSO
 .BR wg (8),
+.BR wg-quick (8),
+.BR ip-rule (8),
 .BR ip-netns (8),
 .BR wireguard (8)

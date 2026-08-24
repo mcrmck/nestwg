@@ -17,7 +17,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const Version = 2
+const Version = 3
 
 const maxStateSize = 1 << 20
 
@@ -36,27 +36,31 @@ type Hop struct {
 }
 
 const (
-	AttachmentPhaseCreating = "creating"
-	AttachmentPhaseActive   = "active"
+	HostRoutingPhaseCreating = "creating"
+	HostRoutingPhaseActive   = "active"
 )
 
-type Attachment struct {
-	Phase         string   `json:"phase"`
-	HostInterface string   `json:"hostInterface"`
-	Routes        []string `json:"routes"`
+type HostRoutingState struct {
+	Phase                string   `json:"phase"`
+	Mode                 string   `json:"mode"`
+	HostInterface        string   `json:"hostInterface"`
+	Routes               []string `json:"routes"`
+	RoutingTable         int      `json:"routingTable,omitempty"`
+	OriginalSrcValidMark int      `json:"originalSrcValidMark,omitempty"`
+	DNSBackend           string   `json:"dnsBackend,omitempty"`
 }
 
 type Chain struct {
-	Version          int         `json:"version"`
-	Name             string      `json:"name"`
-	Phase            string      `json:"phase"`
-	ChainFile        string      `json:"chainFile"`
-	PayloadNamespace string      `json:"payloadNamespace"`
-	Namespaces       []string    `json:"namespaces"`
-	ResolverFile     string      `json:"resolverFile"`
-	Hops             []Hop       `json:"hops"`
-	Attachment       *Attachment `json:"attachment,omitempty"`
-	CreatedAt        time.Time   `json:"createdAt"`
+	Version          int               `json:"version"`
+	Name             string            `json:"name"`
+	Phase            string            `json:"phase"`
+	ChainFile        string            `json:"chainFile"`
+	PayloadNamespace string            `json:"payloadNamespace"`
+	Namespaces       []string          `json:"namespaces"`
+	ResolverFile     string            `json:"resolverFile"`
+	Hops             []Hop             `json:"hops"`
+	HostRouting      *HostRoutingState `json:"hostRouting,omitempty"`
+	CreatedAt        time.Time         `json:"createdAt"`
 }
 
 type Store struct{ Directory string }
@@ -375,25 +379,38 @@ func validateChain(store Store, chain *Chain) error {
 			return fmt.Errorf("hop %q references an unknown namespace", hop.Name)
 		}
 	}
-	if chain.Attachment != nil {
-		attachment := chain.Attachment
-		if attachment.Phase != AttachmentPhaseCreating && attachment.Phase != AttachmentPhaseActive {
-			return fmt.Errorf("invalid attachment phase %q", attachment.Phase)
+	if chain.HostRouting != nil {
+		routing := chain.HostRouting
+		if routing.Phase != HostRoutingPhaseCreating && routing.Phase != HostRoutingPhaseActive {
+			return fmt.Errorf("invalid host-routing phase %q", routing.Phase)
 		}
-		if attachment.HostInterface == "" || len(attachment.HostInterface) > 15 {
-			return errors.New("attachment interface name must contain 1 to 15 characters")
+		if routing.HostInterface == "" || len(routing.HostInterface) > 15 {
+			return errors.New("host-routing interface name must contain 1 to 15 characters")
 		}
-		if len(attachment.Routes) == 0 {
-			return errors.New("attachment has no routes")
+		if len(routing.Routes) == 0 {
+			return errors.New("host routing has no routes")
 		}
-		seenRoutes := make(map[string]struct{}, len(attachment.Routes))
-		for _, route := range attachment.Routes {
+		if routing.Mode != "selected" && routing.Mode != "default" {
+			return fmt.Errorf("invalid host-routing mode %q", routing.Mode)
+		}
+		if routing.Mode == "default" {
+			if routing.RoutingTable < 1 || routing.RoutingTable > 0x7fffffff {
+				return errors.New("default host routing has an invalid routing table")
+			}
+		} else if routing.RoutingTable != 0 {
+			return errors.New("selected host routing unexpectedly has a routing table")
+		}
+		if routing.DNSBackend != "" && routing.DNSBackend != "resolvconf" && routing.DNSBackend != "resolvectl" {
+			return fmt.Errorf("invalid host DNS backend %q", routing.DNSBackend)
+		}
+		seenRoutes := make(map[string]struct{}, len(routing.Routes))
+		for _, route := range routing.Routes {
 			prefix, err := netip.ParsePrefix(route)
 			if err != nil || prefix.String() != route {
-				return fmt.Errorf("attachment route %q is not a canonical CIDR", route)
+				return fmt.Errorf("host route %q is not a canonical CIDR", route)
 			}
 			if _, exists := seenRoutes[route]; exists {
-				return fmt.Errorf("attachment route %q is duplicated", route)
+				return fmt.Errorf("host route %q is duplicated", route)
 			}
 			seenRoutes[route] = struct{}{}
 		}

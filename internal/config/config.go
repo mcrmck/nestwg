@@ -34,9 +34,23 @@ type Metadata struct {
 }
 
 type Spec struct {
-	BaseMTU int      `yaml:"baseMTU,omitempty"`
-	DNS     []string `yaml:"dns,omitempty"`
-	Hops    []Hop    `yaml:"hops"`
+	BaseMTU     int         `yaml:"baseMTU,omitempty"`
+	DNS         []string    `yaml:"dns,omitempty"`
+	HostRouting HostRouting `yaml:"hostRouting"`
+	Hops        []Hop       `yaml:"hops"`
+}
+
+const (
+	HostRoutingDefault  = "default"
+	HostRoutingSelected = "selected"
+	HostRoutingIsolated = "isolated"
+)
+
+// HostRouting describes how the innermost WireGuard interface is exposed to
+// the host after the nested chain is constructed.
+type HostRouting struct {
+	Mode   string   `yaml:"mode" json:"mode"`
+	Routes []string `yaml:"routes,omitempty" json:"routes,omitempty"`
 }
 
 type Hop struct {
@@ -99,6 +113,12 @@ func (document *Document) Validate() error {
 	if len(document.Spec.Hops) < 2 {
 		validationErrors = append(validationErrors, errors.New("spec.hops must contain at least two hops"))
 	}
+	if err := document.Spec.HostRouting.Validate(); err != nil {
+		validationErrors = append(validationErrors, fmt.Errorf("spec.hostRouting: %w", err))
+	}
+	if document.Spec.HostRouting.Mode == HostRoutingIsolated && len(document.Spec.DNS) != 0 {
+		validationErrors = append(validationErrors, errors.New("spec.dns is not used with isolated host routing"))
+	}
 
 	for index, resolver := range document.Spec.DNS {
 		if _, err := netip.ParseAddr(resolver); err != nil {
@@ -133,4 +153,37 @@ func (document *Document) Validate() error {
 	}
 
 	return errors.Join(validationErrors...)
+}
+
+func (routing HostRouting) Validate() error {
+	switch routing.Mode {
+	case HostRoutingDefault, HostRoutingIsolated:
+		if len(routing.Routes) != 0 {
+			return fmt.Errorf("mode %q does not accept routes", routing.Mode)
+		}
+	case HostRoutingSelected:
+		if len(routing.Routes) == 0 {
+			return errors.New("mode \"selected\" requires at least one route")
+		}
+	case "":
+		return errors.New("mode is required (default, selected, or isolated)")
+	default:
+		return fmt.Errorf("mode must be default, selected, or isolated, not %q", routing.Mode)
+	}
+	seen := make(map[netip.Prefix]struct{}, len(routing.Routes))
+	for index, value := range routing.Routes {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil {
+			return fmt.Errorf("routes[%d] is not a CIDR: %q", index, value)
+		}
+		prefix = prefix.Masked()
+		if prefix.Bits() == 0 {
+			return fmt.Errorf("routes[%d] is a default route; use mode \"default\"", index)
+		}
+		if _, exists := seen[prefix]; exists {
+			return fmt.Errorf("route %s is duplicated", prefix)
+		}
+		seen[prefix] = struct{}{}
+	}
+	return nil
 }

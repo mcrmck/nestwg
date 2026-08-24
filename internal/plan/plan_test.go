@@ -131,6 +131,27 @@ func TestBuildResolvedRejectsUnroutedDNS(t *testing.T) {
 	}
 }
 
+func TestBuildResolvedRejectsHostRouteOutsideExitAllowedIPs(t *testing.T) {
+	directory := t.TempDir()
+	entry := writeWireGuardConfig(t, directory, "entry.conf", "entry.example:51820", "0.0.0.0/0")
+	exit := writeWireGuardConfig(t, directory, "exit.conf", "exit.example:51821", "10.0.0.0/8")
+	document := &config.Document{Metadata: config.Metadata{Name: "example"}, Spec: config.Spec{
+		HostRouting: config.HostRouting{Mode: config.HostRoutingSelected, Routes: []string{"192.168.0.0/16"}},
+		Hops: []config.Hop{
+			{Name: "entry", WireGuardConfigPath: entry, OuterFamily: "ipv4"},
+			{Name: "exit", WireGuardConfigPath: exit, OuterFamily: "ipv4"},
+		},
+	}}
+	resolver := fakeResolver{
+		"ip4:entry.example": {netip.MustParseAddr("192.0.2.1")},
+		"ip4:exit.example":  {netip.MustParseAddr("10.0.0.2")},
+	}
+	_, err := BuildResolved(context.Background(), document, resolver)
+	if err == nil || !strings.Contains(err.Error(), "do not cover host route") {
+		t.Fatalf("BuildResolved() error = %v", err)
+	}
+}
+
 func writeWireGuardConfig(t *testing.T, directory, name, endpoint, allowedIPs string) string {
 	t.Helper()
 	contents := `[Interface]

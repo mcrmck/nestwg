@@ -2,17 +2,13 @@
 
 local -a commands
 commands=(
-  'connect:connect a nested VPN and open a terminal'
+	'help:show general or command-specific help'
   'validate:validate a chain and its WireGuard files'
   'plan:print the pinned executable plan'
-  'up:create a persistent nested VPN chain'
-  'attach:route selected host CIDRs through a VPN'
-  'detach:remove protected host routes and device'
-  'down:remove a chain'
+  'up:expose a nested VPN to host traffic'
+  'down:remove host routing and the nested VPN'
   'status:show live chain status'
   'diagnose:check VPN and protected-route health'
-  'exec:run a command through a connected VPN'
-  'shell:open a shell through a connected VPN'
   'doctor:check Linux networking prerequisites'
   'recover:remove process-free orphan VPN resources'
   'version:print the version'
@@ -28,17 +24,14 @@ case "$state" in
     ;;
   args)
     case "$words[2]" in
-      connect)
-        _arguments '--wait[wait for every VPN hop]:duration:' '*:chain file:_files -g "*.yaml"'
-        ;;
       validate|plan)
         _files -g '*.yaml'
         ;;
       up)
-        _arguments '--wait[wait for handshakes]:duration:' '*:chain file:_files -g "*.yaml"'
+        _arguments '(-v --verbose)'{-v,--verbose}'[print lifecycle progress]' '--wait[wait for handshakes]:duration:' '--default-route[route supported address families through the VPN]' '*--route[route a destination through the VPN]:CIDR:' '--isolated[construct without host routing]' '*:chain file or name:_files -g "*.yaml"'
         ;;
-      attach)
-        _arguments '*--route[protect a destination through the VPN]:CIDR:' '1:chain name:'
+      down)
+        _arguments '(-v --verbose)'{-v,--verbose}'[print lifecycle progress]' '*:chain file or name:_files -g "*.yaml"'
         ;;
     esac
     ;;

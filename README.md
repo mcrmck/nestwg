@@ -4,9 +4,10 @@
 [![Security](https://github.com/mcrmck/nestwg/actions/workflows/security.yml/badge.svg)](https://github.com/mcrmck/nestwg/actions/workflows/security.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-`nestwg` is a Linux VPN client that sends your terminal traffic through two or
-more WireGuard VPNs in sequence. Connect once, use your usual shell commands,
-and type `exit` when you want to disconnect.
+`nestwg` is a Linux VPN client that sends ordinary host traffic through two or
+more WireGuard VPNs in sequence. It presents one WireGuard interface to the
+host while keeping the preceding tunnel interfaces in internal network
+namespaces.
 
 ```text
 application packet
@@ -21,10 +22,9 @@ WireGuard client configuration and permits traffic to the next hop.
 
 ## Status
 
-This repository is a pre-release technical preview. The primary workflow is a
-VPN terminal that connects every configured WireGuard hop and disconnects
-automatically when the terminal exits. Persistent connections, one-command
-execution, and selective host CIDR routing are also available.
+This repository is a pre-release technical preview. The primary workflow feels
+like `wg-quick`: `up` connects the nested chain and changes host routing, normal
+applications use it, and `down` restores the previous routing state.
 
 ## Design goals
 
@@ -32,7 +32,7 @@ execution, and selective host CIDR routing are also available.
 - no custom cryptography
 - two or more independently configured hops
 - safe composition of self-hosted and commercial peers
-- terminal traffic that cannot fall back to the normal Internet connection
+- default-route and selected-CIDR host routing with leak protection
 - transactional setup and cleanup
 - inspectable plans before any privileged changes
 - explicit threat model and conservative privacy claims
@@ -40,93 +40,68 @@ execution, and selective host CIDR routing are also available.
 ## Quick start
 
 ```sh
+sudo install -d -m 755 /etc/nestwg
+sudo install -m 600 chain.yaml /etc/nestwg/example.yaml
 sudo nestwg doctor
-nestwg validate chain.yaml
-sudo nestwg connect chain.yaml
+nestwg validate example
+sudo nestwg up example
 ```
 
-NestWG configures every VPN hop and opens your normal shell:
+NestWG configures every VPN hop, exposes the final device, and returns to the
+existing shell:
 
 ```text
-VPN "example" ready through 2 hops
-VPN terminal started; type `exit` to disconnect
+VPN "example" is up as nwg-example (default host routing)
 ```
 
-Commands run in that terminal use the nested VPN. For example, `ip route`
-shows the VPN routing table and `curl https://icanhazip.com` should show the
-final VPN hop's public address. The environment variables `NESTWG_VPN=1` and
-`NESTWG_CHAIN=example` identify the VPN terminal. Type `exit` to close the
-terminal and automatically disconnect the VPN.
-
-Root privileges are required to configure the VPN, but NestWG drops the shell
-back to the user who invoked `sudo`. Internal interface and isolation details
-do not need to be managed by the user.
-
-## Persistent and advanced use
-
-Keep a VPN connected across multiple terminal sessions with:
+Continue using the same shell and applications. `ip address` shows the
+host-visible device and `curl https://icanhazip.com` should show the final VPN
+hop's public address. Disconnect with:
 
 ```sh
-sudo nestwg up --wait 10s chain.yaml
-sudo nestwg status example
-sudo nestwg shell example
-sudo nestwg exec example -- curl https://example.com
 sudo nestwg down example
 ```
 
-To send selected destinations from ordinary host applications through the
-nested VPN while leaving all other host traffic unchanged:
+`spec.hostRouting.mode` selects `default`, `selected`, or `isolated`. Default
+mode uses a dedicated policy table, marks the outer WireGuard socket so it
+continues to use the physical route, and installs an OUTPUT kill switch.
+Selected mode installs only the configured CIDRs plus lower-priority
+unreachable routes. In either host-routing mode, loss of the VPN interface
+cannot silently fall back to the ordinary Internet route.
+
+Set `spec.dns` when the host resolver should follow the VPN. Omitting it leaves
+the existing host DNS configuration unchanged and may leak DNS queries in
+default-route mode.
+
+Routing can be overridden for one invocation:
 
 ```sh
-sudo nestwg up --wait 10s chain.yaml
-sudo nestwg attach example \
-  --route 203.0.113.0/24 \
-  --route 2001:db8:1234::/48
-sudo nestwg status example
-sudo nestwg diagnose example
+sudo nestwg up --default-route chain.yaml
+sudo nestwg up --route 10.0.0.0/8 --route 203.0.113.7/32 chain.yaml
+sudo nestwg up --isolated chain.yaml  # diagnostics only; no host traffic
 ```
 
-`attach` exposes the innermost WireGuard device to the host and installs only
-the requested routes. The device's encrypted UDP socket remains inside the
-previous VPN layer, preserving the nested path without NAT or packet
-forwarding.
+Like `wg-quick`, a bare name resolves through a conventional configuration
+directory: `nestwg up example` loads `/etc/nestwg/example.yaml`. An explicit
+path works everywhere a chain is accepted, and the same reference may be used
+for teardown (`nestwg down ./chain.yaml`). Add `--verbose` (or `-v`) to `up`
+or `down` to show lifecycle progress; normal output stays concise. Every
+command supports `--help`, for example `nestwg up --help`.
 
-Each live VPN route has a lower-priority unreachable alternative. If the
-device or VPN path disappears, the protected CIDR remains blocked instead of
-falling back to the host's normal default route. `down` therefore refuses an
-attached VPN. Restoring ordinary routing is explicit:
-
-```sh
-sudo nestwg detach example
-sudo nestwg down example
-```
-
-Every attached CIDR must be covered by the final peer's `AllowedIPs`. CIDRs
-are destination based: all host processes using the normal routing table are
-affected. Existing exact routes are never replaced. The preview rejects `/0`
-attachments; use `connect` for an isolated full-tunnel session.
-
-While attached, use applications normally on the host. `nestwg exec` and
-`nestwg shell` are disabled because the exit device is host-visible rather
-than inside the isolated VPN terminal; `detach` restores those workflows.
+Every routed CIDR must be covered by the final peer's `AllowedIPs`. Selected
+routes are destination based and affect every host process using the normal
+routing table; NestWG does not select by process, user, domain, or port.
 
 Use `nestwg plan chain.yaml` to preview resolved endpoints, interfaces, routes,
 and MTUs without changing the host. `sudo nestwg recover example` is available
 for conservative cleanup after externally lost runtime state.
 
-The lifecycle is functional but remains pre-release. VPN commands receive a
-private resolver configuration, `status` reads live handshake and transfer
-information, and a pre-mutation recovery record lets `down` clean up an
-interrupted `up`. If a state file is externally deleted, `recover` can remove
-strictly named, process-free orphan resources. `up` can return before every
-handshake is ready unless `--wait` is requested. `connect` safely initiates the
-nested handshakes and waits up to 10 seconds by default; use
-`connect --wait 0` to open the terminal immediately. Do not rely on this
-pre-release version as a security or anonymity boundary yet.
-
-`up --wait 10s` waits for every hop to complete a WireGuard handshake. Without
-`--wait`, `up` returns as soon as the persistent interfaces are configured and
-`status` reports `connecting` until handshakes occur.
+The lifecycle is functional but remains pre-release. `up` initiates every
+nested handshake and waits up to ten seconds by default. `--wait 0` skips the
+readiness check. A pre-mutation recovery record lets `down` finish interrupted
+cleanup, while `recover` conservatively removes process-free orphan resources
+after externally lost state. Do not rely on this preview as a security or
+anonymity boundary yet.
 
 An initial VPN configuration looks like:
 
@@ -139,6 +114,8 @@ spec:
   baseMTU: 1500
   dns:
     - 1.1.1.1
+  hostRouting:
+    mode: default
   hops:
     - name: entry
       wireguardConfig: ./entry.conf
@@ -158,6 +135,8 @@ self-hosted servers, or any mixture of the two. See
 - Linux with network namespace support
 - `iproute2`
 - `wireguard-tools`
+- `iptables` and `ip6tables`
+- `resolvconf` or `resolvectl` when `spec.dns` is configured
 - Docker with Compose for the privileged integration lab
 
 The integration test container requires `CAP_NET_ADMIN` and access to the

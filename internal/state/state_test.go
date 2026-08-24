@@ -40,13 +40,13 @@ func TestStoreRoundTripAndList(t *testing.T) {
 	}
 }
 
-func TestStoreRoundTripsAttachment(t *testing.T) {
+func TestStoreRoundTripsHostRouting(t *testing.T) {
 	store := testStore(t)
 	want := &Chain{
 		Name: "example", Phase: PhaseActive, ChainFile: "/chain.yaml",
 		PayloadNamespace: "nwg-example-app", Namespaces: []string{"nwg-example-app"},
 		ResolverFile: store.ResolverPath("example"), CreatedAt: time.Unix(123, 0).UTC(),
-		Attachment: &Attachment{Phase: AttachmentPhaseActive, HostInterface: "nwg1234", Routes: []string{"10.0.0.0/8"}},
+		HostRouting: &HostRoutingState{Phase: HostRoutingPhaseActive, Mode: "selected", HostInterface: "nwg1234", Routes: []string{"10.0.0.0/8"}},
 	}
 	if err := store.Save(want); err != nil {
 		t.Fatal(err)
@@ -55,8 +55,8 @@ func TestStoreRoundTripsAttachment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Attachment == nil || got.Attachment.Routes[0] != "10.0.0.0/8" {
-		t.Fatalf("Load() attachment = %#v", got.Attachment)
+	if got.HostRouting == nil || got.HostRouting.Routes[0] != "10.0.0.0/8" {
+		t.Fatalf("Load() host routing = %#v", got.HostRouting)
 	}
 }
 

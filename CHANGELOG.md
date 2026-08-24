@@ -5,28 +5,35 @@ Versioning once the first version is tagged.
 
 ## Unreleased
 
-- Added direct WireGuard-device selective CIDR routing with explicit
-  attach/detach,
-  per-route unreachable fallbacks, and teardown protection against route
-  leaks.
-- Added `diagnose` checks for runtime construction, handshakes, attachment
-  devices, live routes, and fail-closed backups.
-- Added a VPN-first `connect` command that initiates and verifies every nested
-  handshake, opens the user's terminal with VPN identity variables, and
-  disconnects on exit.
+- Add wg-quick-style bare-name lookup in `/etc/nestwg`, config-path teardown,
+  readable host interface names, command-specific help, and optional verbose
+  lifecycle output.
+
+- Reworked the lifecycle to expose one ordinary host WireGuard interface while
+  preserving every preceding hop in an internal namespace.
+- Added chain-configured and CLI-overridable `default`, `selected`, and
+  `isolated` host-routing modes.
+- Added default-route policy tables, an outer WireGuard socket mark, IPv4/IPv6
+  OUTPUT kill switches, and automatic cleanup through `down`.
+- Added selected CIDR routing with per-route unreachable fallbacks.
+- Added host DNS integration through resolvconf and systemd-resolved.
+- Removed terminal-scoped `connect`, `exec`, and `shell` and the separate
+  `attach`/`detach` lifecycle.
+- Added `diagnose` checks for runtime construction, handshakes, the visible host
+  device, live routes, and mode-specific leak protection.
 - Added chain and WireGuard configuration validation with secret-safe errors.
 - Added inspectable plans with pinned endpoints, routes, namespaces, and MTUs.
-- Added persistent `up`, `down`, `status`, `exec`, and `shell` commands.
+- Added persistent `up`, `down`, and `status` commands.
 - Added transactional Linux netlink/WireGuard setup and recovery state.
-- Added private payload DNS, live handshake status, and `doctor` checks.
+- Added live handshake status and `doctor` checks.
 - Added optional handshake readiness waiting with `up --wait`.
 - Added conservative orphan recovery that refuses namespaces with processes.
 - Hardened runtime-state loading against symlinks, unsafe ownership and modes,
   oversized files, and resolver-content injection; deletions are now synced.
 - Added namespace ownership preflight and recovery-state retention when
   automatic rollback is incomplete.
-- Added a runtime-driven three-hop mixed IPv4/IPv6 integration lab with leak,
-  lifecycle-lock, identity-restoration, DNS, and rollback assertions.
+- Added a runtime-driven three-hop mixed IPv4/IPv6 integration lab with
+  selected/default host-routing, leak-protection, and rollback assertions.
 - Added integration-only failure injection across privileged setup, rollback,
   and retryable teardown stages, tested on Ubuntu 22.04 and 24.04 runners.
 - Added reproducible amd64 and arm64 Debian packages to tagged releases.

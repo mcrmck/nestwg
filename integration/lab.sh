@@ -241,8 +241,11 @@ metadata:
   name: lab
 spec:
   baseMTU: 1500
-  dns:
-    - 203.0.114.2
+  hostRouting:
+    mode: selected
+    routes:
+      - 203.0.114.2/32
+      - fd00:3::1/128
   hops:
     - name: entry
       wireguardConfig: $KEY_DIR/entry.conf
@@ -261,6 +264,8 @@ kind: Chain
 metadata:
   name: failure
 spec:
+  hostRouting:
+    mode: isolated
   hops:
     - name: first
       wireguardConfig: $KEY_DIR/entry.conf
@@ -272,6 +277,10 @@ spec:
       wireguardConfig: $KEY_DIR/exit.conf
       outerFamily: ipv4
 EOF
+
+# Exercise the wg-quick-style bare-name lookup used by normal installations.
+install -d -m 0755 /etc/nestwg
+install -m 0600 "$KEY_DIR/chain.yaml" /etc/nestwg/lab.yaml
 
 # A complete collision preflight must reject a foreign namespace before the
 # first mutation or ownership record is created.
@@ -311,42 +320,26 @@ assert_lab_namespaces_present
 nestwg down lab
 assert_lab_absent
 
-# The primary terminal workflow must own the whole lifecycle: connect every
-# hop, identify the VPN shell, carry traffic, and remove the VPN on shell exit.
-# Remove keepalives first to prove that connect actively initiates handshakes.
+# The primary host workflow must initiate every nested handshake, expose only
+# the innermost interface, and route ordinary client processes through it.
+# Remove keepalives first to prove that up actively initiates handshakes.
 for config in entry.conf exit.conf final.conf; do
     sed -i '/^PersistentKeepalive =/d' "$KEY_DIR/$config"
 done
-printf '%s\n' \
-    'test "$NESTWG_VPN" = 1' \
-    'test "$NESTWG_CHAIN" = lab' \
-    'ip route get 203.0.114.2 | grep -q "dev nwg2"' \
-    'ping -c 1 -W 2 203.0.114.2 >/dev/null' \
-    | SHELL=/bin/sh nsenter --net="/run/netns/$C0" nestwg connect "$KEY_DIR/chain.yaml"
-assert_lab_absent
+nsenter --net="/run/netns/$C0" nestwg up --wait 10s lab
 for config in entry.conf exit.conf final.conf; do
     printf '\nPersistentKeepalive = 5\n' >>"$KEY_DIR/$config"
 done
-
-# NestWG creates all clients, placing each interface one network layer inward
-# while its encrypted UDP socket remains in its birth namespace.
-nsenter --net="/run/netns/$C0" nestwg up --wait 10s "$KEY_DIR/chain.yaml"
-nestwg status lab
-nestwg exec lab -- grep -qx 'nameserver 203.0.114.2' /etc/resolv.conf
-nobody_home="$(getent passwd 65534 | cut -d: -f6)"
-EXPECTED_HOME="$nobody_home" SUDO_UID=65534 SUDO_GID=65534 \
-    nestwg exec lab -- sh -c 'test "$(id -u)" = 65534 && test "$HOME" = "$EXPECTED_HOME"'
-nestwg exec lab -- sleep 1 &
-payload_process_pid=$!
-sleep 0.1
-if nestwg down lab 2>/dev/null; then
-    fail "down unexpectedly detached a chain with a running payload process"
-fi
-wait "$payload_process_pid"
-
-ip -n "$PAYLOAD" link show dev nwg2 >/dev/null
+nsenter --net="/run/netns/$C0" nestwg status lab
 if ip -n "$PAYLOAD" link show type veth | grep -q .; then
     fail "payload namespace unexpectedly contains a veth escape path"
+fi
+attachment_device="$(nsenter --net="/run/netns/$C0" nestwg status lab | awk '/host device/{sub(":", "", $3); print $3}')"
+if [[ -z "$attachment_device" ]]; then
+    fail "status did not report the host VPN device"
+fi
+if ! ip -n "$C0" -details link show "$attachment_device" | grep -q 'wireguard'; then
+    fail "host device is not the innermost WireGuard interface"
 fi
 
 ENTRY_CAPTURE="$KEY_DIR/entry.pcap"
@@ -368,8 +361,8 @@ ip netns exec "$EXIT" timeout 5 tcpdump -qnni exit-entry \
 exit_underlay_capture_pid=$!
 
 sleep 0.25
-nestwg exec lab -- ping -c 2 -W 2 203.0.114.2 >/dev/null
-nestwg status lab | grep -q $'lab\tready\t'
+ip netns exec "$C0" ping -c 2 -W 2 203.0.114.2 >/dev/null
+nsenter --net="/run/netns/$C0" nestwg status lab | grep -q $'lab\tready\t'
 
 wait "$entry_capture_pid"
 wait "$middle_capture_pid"
@@ -400,18 +393,9 @@ echo "entry saw only the opaque inner tunnel endpoint: 198.51.100.2"
 echo "middle saw only the opaque IPv6 innermost endpoint: 2001:db8:2::2"
 echo "exit saw the final destination but not the client underlay: 203.0.114.2"
 
-# A persistent chain can expose selected CIDRs to ordinary host processes.
+# Selected routing exposes the final interface to ordinary host processes.
 # NestWG installs an unreachable alternative for every live route, so loss of
-# the attachment cannot make protected traffic fall back to the host default.
-nsenter --net="/run/netns/$C0" nestwg attach lab \
-    --route 203.0.114.2/32 --route fd00:3::1/128
-attachment_device="$(nsenter --net="/run/netns/$C0" nestwg status lab | awk '/host device/{sub(":", "", $3); print $3}')"
-if [[ -z "$attachment_device" ]]; then
-    fail "status did not report the host attachment device"
-fi
-if ! ip -n "$C0" -details link show "$attachment_device" | grep -q 'wireguard'; then
-    fail "host attachment is not the innermost WireGuard device"
-fi
+# interface cannot make protected traffic fall back to the physical default.
 nsenter --net="/run/netns/$C0" nestwg diagnose lab
 if [[ "$(ip -n "$C0" route show exact 203.0.114.2/32 | wc -l)" -ne 2 ]]; then
     fail "protected CIDR does not have both active and fail-closed routes"
@@ -426,17 +410,10 @@ if ! ip netns exec "$C0" ping -c 1 -W 2 203.0.114.2; then
 fi
 ip netns exec "$C0" ping -6 -c 1 -W 2 fd00:3::1 >/dev/null
 ip netns exec "$C0" ping -c 1 -W 2 192.0.2.1 >/dev/null
-if nestwg down lab 2>/dev/null; then
-    fail "down unexpectedly removed a VPN with protected host routes"
-fi
-if nsenter --net="/run/netns/$C0" nestwg exec lab -- true 2>/dev/null; then
-    fail "exec unexpectedly entered an attached VPN without its exit device"
-fi
-
-# Simulate sudden attachment loss by moving the WireGuard device away from the
+# Simulate sudden host-interface loss by moving the WireGuard device away. The
 # host. Its active route disappears, but the unreachable alternative must
-# remain and win over the normal default. Detach then restores its original
-# payload location and name.
+# remain and win over the normal default. Down restores the device internally
+# before removing the complete chain.
 ip -n "$C0" link set "$attachment_device" netns "$PAYLOAD"
 if ip netns exec "$C0" ip route get 203.0.114.2 >/dev/null 2>&1; then
     fail "protected traffic fell back after attachment device loss"
@@ -450,14 +427,37 @@ fi
 if ! ip -n "$C0" -6 route show exact fd00:3::1/128 type unreachable | grep -q '^unreachable'; then
     fail "IPv6 fail-closed route disappeared with the attachment device"
 fi
-nsenter --net="/run/netns/$C0" nestwg detach lab
+# Teardown also accepts the same configuration path used for setup.
+nsenter --net="/run/netns/$C0" nestwg down /etc/nestwg/lab.yaml
 if ip -n "$C0" route show exact 203.0.114.2/32 | grep -q .; then
-    fail "detach left host routes behind"
+    fail "down left host routes behind"
 fi
 if ip -n "$C0" -6 route show exact fd00:3::1/128 | grep -q .; then
-    fail "detach left IPv6 host routes behind"
+    fail "down left IPv6 host routes behind"
 fi
-ip -n "$PAYLOAD" link show nwg2 >/dev/null
+assert_lab_absent
+
+# Default routing uses a dedicated policy table and an OUTPUT kill switch.
+# The visible final interface carries ordinary host traffic while the marked
+# outer WireGuard socket continues to use the physical route.
+nsenter --net="/run/netns/$C0" nestwg up --default-route --wait 10s "$KEY_DIR/chain.yaml"
+attachment_device="$(nsenter --net="/run/netns/$C0" nestwg status lab | awk '/host device/{sub(":", "", $3); print $3}')"
+nsenter --net="/run/netns/$C0" nestwg diagnose lab
+ip netns exec "$C0" ip rule show | grep -q 'suppress_prefixlength 0'
+ip netns exec "$C0" iptables -S OUTPUT | grep -q "nestwg:$attachment_device"
+ip netns exec "$C0" ping -c 1 -W 2 203.0.114.2 >/dev/null
+ip netns exec "$C0" ping -6 -c 1 -W 2 fd00:3::1 >/dev/null
+nsenter --net="/run/netns/$C0" nestwg down lab
+if ip netns exec "$C0" ip rule show | grep -q 'suppress_prefixlength 0'; then
+    fail "down left default-routing policy behind"
+fi
+if ip netns exec "$C0" iptables -S OUTPUT | grep -q "nestwg:$attachment_device"; then
+    fail "down left the kill switch behind"
+fi
+assert_lab_absent
+
+# Build an isolated chain only for teardown failpoint coverage.
+nsenter --net="/run/netns/$C0" nestwg up --isolated --wait 0 "$KEY_DIR/chain.yaml"
 
 # Teardown failures must retain enough state for a safe retry. Exercise a
 # failure before namespace deletion, after namespace deletion, and after the
@@ -482,7 +482,7 @@ fi
 nestwg down lab
 assert_lab_absent
 
-nsenter --net="/run/netns/$C0" nestwg up "$KEY_DIR/chain.yaml"
+nsenter --net="/run/netns/$C0" nestwg up --isolated --wait 0 "$KEY_DIR/chain.yaml"
 if NESTWG_FAILPOINT=down-delete-state nestwg down lab 2>/dev/null; then
     fail "state-deletion failpoint unexpectedly succeeded"
 fi
